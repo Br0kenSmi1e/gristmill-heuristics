@@ -21,15 +21,30 @@ fn coeff_f64(c: &truthmill::Coefficient) -> f64 {
     *c.numer() as f64 / *c.denom() as f64
 }
 
-/// Input blocks converted to tenferro tensors.
-pub type TensorBlocks = HashMap<(u32, Vec<u32>), Tensor>;
+/// Input blocks converted to tenferro tensors, each with its storage
+/// permutation (identity for unpermuted blocks). Storage axis k holds the
+/// logical axis `perm[k]`.
+pub type TensorBlocks = HashMap<(u32, Vec<u32>), (Tensor, Vec<usize>)>;
 
 pub fn to_tensor_blocks(blocks: &Blocks) -> Result<TensorBlocks> {
     let mut out = HashMap::new();
     for (key, dense) in blocks {
         let tensor = Tensor::from_vec_col_major(dense.dims.clone(), dense.data.clone())
             .map_err(anyhow::Error::msg)?;
-        out.insert(key.clone(), tensor);
+        let perm: Vec<usize> = (0..dense.dims.len()).collect();
+        out.insert(key.clone(), (tensor, perm));
+    }
+    Ok(out)
+}
+
+pub fn to_tensor_blocks_permuted(
+    blocks: &crate::layout::PermutedBlocks,
+) -> Result<TensorBlocks> {
+    let mut out = HashMap::new();
+    for (key, (dense, perm)) in blocks {
+        let tensor = Tensor::from_vec_col_major(dense.dims.clone(), dense.data.clone())
+            .map_err(anyhow::Error::msg)?;
+        out.insert(key.clone(), (tensor, perm.clone()));
     }
     Ok(out)
 }
@@ -42,6 +57,15 @@ fn subscripts(code: &Code) -> (Vec<Vec<u32>>, Vec<u32>) {
         .collect();
     let output: Vec<u32> = code.output.iter().map(|l| l.0).collect();
     (inputs, output)
+}
+
+/// Argument labels in physical storage order: storage axis k holds logical
+/// axis `perm[k]`, and logical axis a carries label `labels[a]`.
+fn physical_labels(labels: &[truthmill::IndexId], perm: Option<&[usize]>) -> Vec<u32> {
+    match perm {
+        Some(p) => p.iter().map(|&k| labels[k].0).collect(),
+        None => labels.iter().map(|l| l.0).collect(),
+    }
 }
 
 pub enum OpPlan {
@@ -62,15 +86,17 @@ fn resolve<'a>(
     reference: ValueRef,
     labels: &[truthmill::IndexId],
     code: &Code,
-) -> Result<&'a Tensor> {
+) -> Result<(&'a Tensor, Option<&'a [usize]>)> {
     match reference {
         ValueRef::Tensor(tensor) => {
             let pattern: Vec<u32> = labels.iter().map(|l| code.domains[l].0).collect();
-            blocks
+            let (block, perm) = blocks
                 .get(&(tensor.0, pattern.clone()))
-                .ok_or_else(|| anyhow::anyhow!("missing block {} {:?}", tensor.0, pattern))
+                .ok_or_else(|| anyhow::anyhow!("missing block {} {:?}", tensor.0, pattern))?;
+            let identity = perm.iter().enumerate().all(|(k, &p)| k == p);
+            Ok((block, if identity { None } else { Some(perm) }))
         }
-        ValueRef::Value(id) => Ok(&values[id.0 as usize]),
+        ValueRef::Value(id) => Ok((&values[id.0 as usize], None)),
     }
 }
 
@@ -84,15 +110,16 @@ pub fn prepare(program: &Program, blocks: &TensorBlocks) -> Result<Vec<OpPlan>> 
     for definition in &program.values {
         match definition {
             ValueDef::Einsum(op) => {
-                let (inputs, output) = subscripts(&op.code);
-                let input_refs: Vec<&[u32]> = inputs.iter().map(Vec::as_slice).collect();
+                let (_, output) = subscripts(&op.code);
+                let mut tensors: Vec<&Tensor> = Vec::new();
+                let mut phys_inputs: Vec<Vec<u32>> = Vec::new();
+                for (a, labels) in op.args.iter().zip(&op.code.inputs) {
+                    let (tensor, perm) = resolve(blocks, &values, *a, labels, &op.code)?;
+                    tensors.push(tensor);
+                    phys_inputs.push(physical_labels(labels, perm));
+                }
+                let input_refs: Vec<&[u32]> = phys_inputs.iter().map(Vec::as_slice).collect();
                 let subs = EinsumSubscripts::new(&input_refs, &output);
-                let tensors: Vec<&Tensor> = op
-                    .args
-                    .iter()
-                    .zip(&op.code.inputs)
-                    .map(|(a, labels)| resolve(blocks, &values, *a, labels, &op.code))
-                    .collect::<Result<_>>()?;
                 let plan = ConcreteEinsumPlan::prepare_subscripts(&tensors, &subs)
                     .map_err(anyhow::Error::msg)?;
                 let coeff = coeff_f64(&op.coeff);
@@ -110,8 +137,8 @@ pub fn prepare(program: &Program, blocks: &TensorBlocks) -> Result<Vec<OpPlan>> 
                 let mut permutes = Vec::new();
                 let mut shape_value: Option<Tensor> = None;
                 for (arg, labels) in op.args.iter().zip(&op.code.inputs) {
-                    let tensor = resolve(blocks, &values, *arg, labels, &op.code)?;
-                    let in_labels: Vec<u32> = labels.iter().map(|l| l.0).collect();
+                    let (tensor, perm) = resolve(blocks, &values, *arg, labels, &op.code)?;
+                    let in_labels = physical_labels(labels, perm);
                     let subs = EinsumSubscripts::new(&[&in_labels[..]], &output);
                     let plan = ConcreteEinsumPlan::prepare_subscripts(&[tensor], &subs)
                         .map_err(anyhow::Error::msg)?;
@@ -147,12 +174,13 @@ pub fn run_prepared(
                 ValueDef::Einsum(op),
                 OpPlan::Einsum { plan, scale },
             ) => {
-                let tensors: Vec<&Tensor> = op
-                    .args
-                    .iter()
-                    .zip(&op.code.inputs)
-                    .map(|(a, labels)| resolve(blocks, &values, *a, labels, &op.code))
-                    .collect::<Result<_>>()?;
+                let mut tensors: Vec<&Tensor> = Vec::new();
+                let mut phys_inputs: Vec<Vec<u32>> = Vec::new();
+                for (a, labels) in op.args.iter().zip(&op.code.inputs) {
+                    let (tensor, perm) = resolve(blocks, &values, *a, labels, &op.code)?;
+                    tensors.push(tensor);
+                    phys_inputs.push(physical_labels(labels, perm));
+                }
                 let mut value = plan
                     .execute(&tensors, backend)
                     .map_err(anyhow::Error::msg)?;
@@ -174,7 +202,7 @@ pub fn run_prepared(
                     .zip(&op.code.inputs)
                     .zip(permutes.iter().zip(coeffs))
                 {
-                    let tensor = resolve(blocks, &values, *arg, labels, &op.code)?;
+                    let (tensor, _) = resolve(blocks, &values, *arg, labels, &op.code)?;
                     let mut term = perm
                         .execute(&[tensor], backend)
                         .map_err(anyhow::Error::msg)?;
@@ -211,15 +239,16 @@ pub fn run_cold(
     for definition in &program.values {
         match definition {
             ValueDef::Einsum(op) => {
-                let (inputs, output) = subscripts(&op.code);
-                let input_refs: Vec<&[u32]> = inputs.iter().map(Vec::as_slice).collect();
+                let (_, output) = subscripts(&op.code);
+                let mut tensors: Vec<&Tensor> = Vec::new();
+                let mut phys_inputs: Vec<Vec<u32>> = Vec::new();
+                for (a, labels) in op.args.iter().zip(&op.code.inputs) {
+                    let (tensor, perm) = resolve(blocks, &values, *a, labels, &op.code)?;
+                    tensors.push(tensor);
+                    phys_inputs.push(physical_labels(labels, perm));
+                }
+                let input_refs: Vec<&[u32]> = phys_inputs.iter().map(Vec::as_slice).collect();
                 let subs = EinsumSubscripts::new(&input_refs, &output);
-                let tensors: Vec<&Tensor> = op
-                    .args
-                    .iter()
-                    .zip(&op.code.inputs)
-                    .map(|(a, labels)| resolve(blocks, &values, *a, labels, &op.code))
-                    .collect::<Result<_>>()?;
                 let mut value = tensors
                     .as_slice()
                     .einsum_subscripts(&subs, backend)
@@ -238,8 +267,8 @@ pub fn run_cold(
                 for (coeff, (arg, labels)) in
                     op.coeff.iter().zip(op.args.iter().zip(&op.code.inputs))
                 {
-                    let tensor = resolve(blocks, &values, *arg, labels, &op.code)?;
-                    let in_labels: Vec<u32> = labels.iter().map(|l| l.0).collect();
+                    let (tensor, perm) = resolve(blocks, &values, *arg, labels, &op.code)?;
+                    let in_labels = physical_labels(labels, perm);
                     let subs = EinsumSubscripts::new(&[&in_labels[..]], &output);
                     let mut term = [tensor]
                         .as_slice()
@@ -358,12 +387,11 @@ fn exec_one(
 ) -> Result<Tensor> {
     match (definition, plan) {
         (ValueDef::Einsum(op), OpPlan::Einsum { plan, scale }) => {
-            let tensors: Vec<&Tensor> = op
-                .args
-                .iter()
-                .zip(&op.code.inputs)
-                .map(|(a, labels)| resolve(blocks, values, *a, labels, &op.code))
-                .collect::<Result<_>>()?;
+            let mut tensors: Vec<&Tensor> = Vec::new();
+            for (a, labels) in op.args.iter().zip(&op.code.inputs) {
+                let (tensor, _) = resolve(blocks, values, *a, labels, &op.code)?;
+                tensors.push(tensor);
+            }
             let mut value = plan.execute(&tensors, backend).map_err(anyhow::Error::msg)?;
             if let Some(scalar) = scale {
                 value = value.mul(scalar, backend).map_err(anyhow::Error::msg)?;
@@ -378,7 +406,7 @@ fn exec_one(
                 .zip(&op.code.inputs)
                 .zip(permutes.iter().zip(coeffs))
             {
-                let tensor = resolve(blocks, values, *arg, labels, &op.code)?;
+                let (tensor, _) = resolve(blocks, values, *arg, labels, &op.code)?;
                 let mut term = perm.execute(&[tensor], backend).map_err(anyhow::Error::msg)?;
                 if (*coeff - 1.0).abs() > 1e-15 {
                     let scalar = Tensor::from_vec_col_major(vec![], vec![*coeff])

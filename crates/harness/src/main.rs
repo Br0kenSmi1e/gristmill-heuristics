@@ -3,6 +3,7 @@
 
 mod dense;
 mod interp;
+mod layout;
 mod oracle;
 mod transform;
 
@@ -35,6 +36,9 @@ enum Cmd {
         /// Program transform to apply before evaluation: none|greedy
         #[arg(long, default_value = "none")]
         transform: String,
+        /// Layout planning: none|greedy-layout
+        #[arg(long, default_value = "none")]
+        layout: String,
     },
     /// Steady-state timing of the reference program with prepared plans.
     Time {
@@ -52,6 +56,9 @@ enum Cmd {
         /// Program transform to apply before evaluation: none|greedy
         #[arg(long, default_value = "none")]
         transform: String,
+        /// Layout planning: none|greedy-layout
+        #[arg(long, default_value = "none")]
+        layout: String,
         /// Use the cold interpreter (replan every call) instead of prepared plans.
         #[arg(long)]
         cold: bool,
@@ -69,6 +76,9 @@ enum Cmd {
         seed: u64,
         #[arg(long, default_value = "none")]
         transform: String,
+        /// Layout planning: none|greedy-layout
+        #[arg(long, default_value = "none")]
+        layout: String,
     },
 }
 
@@ -102,12 +112,13 @@ fn main() -> Result<()> {
             sizes,
             seed,
             transform,
+            layout,
         } => {
             let problem = load_problem(&problem, &sizes)?;
             let program = apply_transform(&problem, &transform)?;
-            let blocks = dense::generate_inputs(&problem, seed);
-            let expected = oracle::eval_program(&problem, &problem.reference, &blocks)?;
-            let tensor_blocks = interp::to_tensor_blocks(&blocks)?;
+            let (program, blocks) = apply_layout(&problem, program, &layout, seed)?;
+            let expected = oracle::eval_program(&problem, &problem.reference, &blocks.orig)?;
+            let tensor_blocks = interp::to_tensor_blocks_permuted(&blocks.permuted)?;
             let mut backend = CpuBackend::with_threads(1).map_err(anyhow::Error::msg)?;
             let actual = interp::run_cold(&program, &tensor_blocks, &mut backend)?;
             let mut worst = 0.0f64;
@@ -138,6 +149,7 @@ fn main() -> Result<()> {
             let record = serde_json::json!({
                 "kind": "check",
                 "transform": transform,
+                "layout": layout,
                 "problem": problem_name(&problem),
                 "sizes": sizes_map(&problem),
                 "seed": seed,
@@ -158,12 +170,13 @@ fn main() -> Result<()> {
             warmup,
             seed,
             transform,
+            layout,
             cold,
         } => {
             let problem = load_problem(&problem, &sizes)?;
             let program = apply_transform(&problem, &transform)?;
-            let blocks = dense::generate_inputs(&problem, seed);
-            let tensor_blocks = interp::to_tensor_blocks(&blocks)?;
+            let (program, blocks) = apply_layout(&problem, program, &layout, seed)?;
+            let tensor_blocks = interp::to_tensor_blocks_permuted(&blocks.permuted)?;
             let mut backend =
                 CpuBackend::with_threads(threads).map_err(anyhow::Error::msg)?;
             let log_flops = truthmill::log_flops(&problem, &program)
@@ -194,6 +207,7 @@ fn main() -> Result<()> {
             let record = serde_json::json!({
                 "kind": "time",
                 "transform": transform,
+                "layout": layout,
                 "problem": problem_name(&problem),
                 "sizes": sizes_map(&problem),
                 "threads": threads,
@@ -215,11 +229,12 @@ fn main() -> Result<()> {
             iters,
             seed,
             transform,
+            layout,
         } => {
             let problem = load_problem(&problem, &sizes)?;
             let program = apply_transform(&problem, &transform)?;
-            let blocks = dense::generate_inputs(&problem, seed);
-            let tensor_blocks = interp::to_tensor_blocks(&blocks)?;
+            let (program, blocks) = apply_layout(&problem, program, &layout, seed)?;
+            let tensor_blocks = interp::to_tensor_blocks_permuted(&blocks.permuted)?;
             let mut backend = CpuBackend::with_threads(threads).map_err(anyhow::Error::msg)?;
             let profiles = interp::profile_ops(&program, &tensor_blocks, &mut backend, iters, &problem.sizes)?;
             let total: f64 = profiles.iter().map(|p| p.median_ms).sum();
@@ -235,6 +250,7 @@ fn main() -> Result<()> {
             let record = serde_json::json!({
                 "kind": "profile",
                 "transform": transform,
+                "layout": layout,
                 "problem": problem_name(&problem),
                 "sizes": sizes_map(&problem),
                 "threads": threads,
@@ -245,6 +261,36 @@ fn main() -> Result<()> {
         }
     }
     Ok(())
+}
+
+pub struct LayoutResult {
+    pub orig: dense::Blocks,
+    pub permuted: layout::PermutedBlocks,
+}
+
+fn apply_layout(
+    problem: &Problem,
+    program: truthmill::Program,
+    layout: &str,
+    seed: u64,
+) -> Result<(truthmill::Program, LayoutResult)> {
+    let orig = dense::generate_inputs(problem, seed);
+    match layout {
+        "none" => {
+            let permuted = layout::apply_layouts_to_blocks(&orig, &layout::Layouts::new());
+            Ok((program, LayoutResult { orig, permuted }))
+        }
+        "greedy-layout" => {
+            if std::env::var("H_DEBUG").is_ok() {
+                layout::debug_dump(problem, &program);
+            }
+            let layouts = layout::plan_layouts(problem, &program);
+            let program = layout::apply_layouts_to_program(&program, &layouts);
+            let permuted = layout::apply_layouts_to_blocks(&orig, &layouts);
+            Ok((program, LayoutResult { orig, permuted }))
+        }
+        other => anyhow::bail!("unknown layout: {other}"),
+    }
 }
 
 fn apply_transform(problem: &Problem, transform: &str) -> Result<truthmill::Program> {
