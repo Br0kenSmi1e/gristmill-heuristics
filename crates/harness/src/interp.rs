@@ -13,7 +13,7 @@ use tenferro_cpu::CpuBackend;
 use tenferro_einsum::{ConcreteEinsumPlan, EinsumSubscripts, TensorEinsumExt};
 use tenferro_runtime::TensorSessionOpsExt;
 use tenferro_tensor::Tensor;
-use truthmill::{Code, Problem, Program, ValueDef, ValueRef};
+use truthmill::{Code, Program, ValueDef, ValueRef};
 
 use crate::dense::Blocks;
 
@@ -106,7 +106,7 @@ pub fn prepare(program: &Program, blocks: &TensorBlocks) -> Result<Vec<OpPlan>> 
                 ops.push(OpPlan::Einsum { plan, scale });
             }
             ValueDef::LinComb(op) => {
-                let (inputs, output) = subscripts(&op.code);
+                let (_inputs, output) = subscripts(&op.code);
                 let mut permutes = Vec::new();
                 let mut shape_value: Option<Tensor> = None;
                 for (arg, labels) in op.args.iter().zip(&op.code.inputs) {
@@ -282,4 +282,116 @@ pub fn checksum(outputs: &[Tensor]) -> f64 {
         sum += acc + data.len() as f64;
     }
     black_box(sum)
+}
+
+pub struct OpProfile {
+    pub value: usize,
+    pub kind: &'static str,
+    pub median_ms: f64,
+    pub union_log10_flops: f64,
+}
+
+/// Time each SSA op individually (median over `iters` executions of that op),
+/// using prepared plans. Warmup: one full program pass plus one per-op call.
+pub fn profile_ops(
+    program: &Program,
+    blocks: &TensorBlocks,
+    backend: &mut CpuBackend,
+    iters: usize,
+    sizes: &std::collections::BTreeMap<truthmill::DomainId, u64>,
+) -> Result<Vec<OpProfile>> {
+    let plans = prepare(program, blocks)?;
+    // One full pass to warm caches and fill `values`.
+    let mut values: Vec<Tensor> = Vec::with_capacity(program.values.len());
+    for (definition, plan) in program.values.iter().zip(&plans) {
+        let value = exec_one(definition, plan, blocks, &values, backend)?;
+        values.push(value);
+    }
+    let mut profiles = Vec::new();
+    for (n, (definition, plan)) in program.values.iter().zip(&plans).enumerate() {
+        let mut times = Vec::with_capacity(iters);
+        for _ in 0..iters {
+            let start = std::time::Instant::now();
+            let value = exec_one(definition, plan, blocks, &values, backend)?;
+            std::hint::black_box(&value);
+            times.push(start.elapsed().as_secs_f64() * 1e3);
+        }
+        times.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let union_log10_flops = match definition {
+            ValueDef::Einsum(op) => {
+                let mut labels: Vec<u32> = op.code.output.iter().map(|l| l.0).collect();
+                for input in &op.code.inputs {
+                    for l in input {
+                        if !labels.contains(&l.0) {
+                            labels.push(l.0);
+                        }
+                    }
+                }
+                let log10: f64 = labels
+                    .iter()
+                    .map(|l| (sizes[&op.code.domains[&truthmill::IndexId(*l)]] as f64).log10())
+                    .sum();
+                log10
+            }
+            ValueDef::LinComb(_) => 0.0,
+        };
+        let kind = match definition {
+            ValueDef::Einsum(_) => "einsum",
+            ValueDef::LinComb(_) => "lincomb",
+        };
+        profiles.push(OpProfile {
+            value: n,
+            kind,
+            median_ms: times[times.len() / 2],
+            union_log10_flops,
+        });
+    }
+    Ok(profiles)
+}
+
+fn exec_one(
+    definition: &ValueDef,
+    plan: &OpPlan,
+    blocks: &TensorBlocks,
+    values: &[Tensor],
+    backend: &mut CpuBackend,
+) -> Result<Tensor> {
+    match (definition, plan) {
+        (ValueDef::Einsum(op), OpPlan::Einsum { plan, scale }) => {
+            let tensors: Vec<&Tensor> = op
+                .args
+                .iter()
+                .zip(&op.code.inputs)
+                .map(|(a, labels)| resolve(blocks, values, *a, labels, &op.code))
+                .collect::<Result<_>>()?;
+            let mut value = plan.execute(&tensors, backend).map_err(anyhow::Error::msg)?;
+            if let Some(scalar) = scale {
+                value = value.mul(scalar, backend).map_err(anyhow::Error::msg)?;
+            }
+            Ok(value)
+        }
+        (ValueDef::LinComb(op), OpPlan::LinComb { permutes, coeffs }) => {
+            let mut acc: Option<Tensor> = None;
+            for ((arg, labels), (perm, coeff)) in op
+                .args
+                .iter()
+                .zip(&op.code.inputs)
+                .zip(permutes.iter().zip(coeffs))
+            {
+                let tensor = resolve(blocks, values, *arg, labels, &op.code)?;
+                let mut term = perm.execute(&[tensor], backend).map_err(anyhow::Error::msg)?;
+                if (*coeff - 1.0).abs() > 1e-15 {
+                    let scalar = Tensor::from_vec_col_major(vec![], vec![*coeff])
+                        .map_err(anyhow::Error::msg)?;
+                    term = term.mul(&scalar, backend).map_err(anyhow::Error::msg)?;
+                }
+                acc = Some(match acc {
+                    None => term,
+                    Some(a) => a.add(&term, backend).map_err(anyhow::Error::msg)?,
+                });
+            }
+            Ok(acc.expect("LinComb with no args"))
+        }
+        _ => anyhow::bail!("plan/program mismatch"),
+    }
 }

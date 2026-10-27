@@ -4,6 +4,7 @@
 mod dense;
 mod interp;
 mod oracle;
+mod transform;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -31,6 +32,9 @@ enum Cmd {
         sizes: Option<String>,
         #[arg(long, default_value = "0")]
         seed: u64,
+        /// Program transform to apply before evaluation: none|greedy
+        #[arg(long, default_value = "none")]
+        transform: String,
     },
     /// Steady-state timing of the reference program with prepared plans.
     Time {
@@ -45,9 +49,26 @@ enum Cmd {
         warmup: usize,
         #[arg(long, default_value = "0")]
         seed: u64,
+        /// Program transform to apply before evaluation: none|greedy
+        #[arg(long, default_value = "none")]
+        transform: String,
         /// Use the cold interpreter (replan every call) instead of prepared plans.
         #[arg(long)]
         cold: bool,
+    },
+    /// Per-op timing profile of one program execution (prepared plans).
+    Profile {
+        problem: PathBuf,
+        #[arg(long)]
+        sizes: Option<String>,
+        #[arg(long, default_value = "1")]
+        threads: usize,
+        #[arg(long, default_value = "5")]
+        iters: usize,
+        #[arg(long, default_value = "0")]
+        seed: u64,
+        #[arg(long, default_value = "none")]
+        transform: String,
     },
 }
 
@@ -80,13 +101,15 @@ fn main() -> Result<()> {
             problem,
             sizes,
             seed,
+            transform,
         } => {
             let problem = load_problem(&problem, &sizes)?;
+            let program = apply_transform(&problem, &transform)?;
             let blocks = dense::generate_inputs(&problem, seed);
             let expected = oracle::eval_program(&problem, &problem.reference, &blocks)?;
             let tensor_blocks = interp::to_tensor_blocks(&blocks)?;
             let mut backend = CpuBackend::with_threads(1).map_err(anyhow::Error::msg)?;
-            let actual = interp::run_cold(&problem.reference, &tensor_blocks, &mut backend)?;
+            let actual = interp::run_cold(&program, &tensor_blocks, &mut backend)?;
             let mut worst = 0.0f64;
             let mut report = Vec::new();
             for (i, (e, a)) in expected.iter().zip(&actual).enumerate() {
@@ -114,6 +137,7 @@ fn main() -> Result<()> {
             }
             let record = serde_json::json!({
                 "kind": "check",
+                "transform": transform,
                 "problem": problem_name(&problem),
                 "sizes": sizes_map(&problem),
                 "seed": seed,
@@ -133,32 +157,31 @@ fn main() -> Result<()> {
             iters,
             warmup,
             seed,
+            transform,
             cold,
         } => {
             let problem = load_problem(&problem, &sizes)?;
+            let program = apply_transform(&problem, &transform)?;
             let blocks = dense::generate_inputs(&problem, seed);
             let tensor_blocks = interp::to_tensor_blocks(&blocks)?;
             let mut backend =
                 CpuBackend::with_threads(threads).map_err(anyhow::Error::msg)?;
-            let log_flops = truthmill::log_flops(&problem, &problem.reference)
+            let log_flops = truthmill::log_flops(&problem, &program)
                 .map_err(|e| anyhow::anyhow!("cost: {e:?}"))?;
             let plans = if cold {
                 None
             } else {
-                Some(interp::prepare(&problem.reference, &tensor_blocks)?)
+                Some(interp::prepare(&program, &tensor_blocks)?)
             };
             let mut times = Vec::with_capacity(iters);
             let mut sum = 0.0;
             for i in 0..(warmup + iters) {
                 let start = Instant::now();
                 let outputs = match &plans {
-                    Some(plans) => interp::run_prepared(
-                        &problem.reference,
-                        plans,
-                        &tensor_blocks,
-                        &mut backend,
-                    )?,
-                    None => interp::run_cold(&problem.reference, &tensor_blocks, &mut backend)?,
+                    Some(plans) => {
+                        interp::run_prepared(&program, plans, &tensor_blocks, &mut backend)?
+                    }
+                    None => interp::run_cold(&program, &tensor_blocks, &mut backend)?,
                 };
                 let elapsed = start.elapsed().as_secs_f64() * 1e3;
                 sum += interp::checksum(&outputs);
@@ -170,6 +193,7 @@ fn main() -> Result<()> {
             let median = times[times.len() / 2];
             let record = serde_json::json!({
                 "kind": "time",
+                "transform": transform,
                 "problem": problem_name(&problem),
                 "sizes": sizes_map(&problem),
                 "threads": threads,
@@ -179,13 +203,62 @@ fn main() -> Result<()> {
                 "median_ms": median,
                 "min_ms": times[0],
                 "max_ms": times[times.len() - 1],
-                "log10_flops": log_flops,
+                "log10_flops": log_flops / std::f64::consts::LN_10,
                 "checksum": sum,
             });
             println!("{}", serde_json::to_string(&record)?);
         }
+        Cmd::Profile {
+            problem,
+            sizes,
+            threads,
+            iters,
+            seed,
+            transform,
+        } => {
+            let problem = load_problem(&problem, &sizes)?;
+            let program = apply_transform(&problem, &transform)?;
+            let blocks = dense::generate_inputs(&problem, seed);
+            let tensor_blocks = interp::to_tensor_blocks(&blocks)?;
+            let mut backend = CpuBackend::with_threads(threads).map_err(anyhow::Error::msg)?;
+            let profiles = interp::profile_ops(&program, &tensor_blocks, &mut backend, iters, &problem.sizes)?;
+            let total: f64 = profiles.iter().map(|p| p.median_ms).sum();
+            let mut out = Vec::new();
+            for p in &profiles {
+                out.push(serde_json::json!({
+                    "value": p.value,
+                    "kind": p.kind,
+                    "median_ms": p.median_ms,
+                    "union_log10_flops": p.union_log10_flops,
+                }));
+            }
+            let record = serde_json::json!({
+                "kind": "profile",
+                "transform": transform,
+                "problem": problem_name(&problem),
+                "sizes": sizes_map(&problem),
+                "threads": threads,
+                "total_median_ms": total,
+                "ops": out,
+            });
+            println!("{}", serde_json::to_string_pretty(&record)?);
+        }
     }
     Ok(())
+}
+
+fn apply_transform(problem: &Problem, transform: &str) -> Result<truthmill::Program> {
+    match transform {
+        "none" => Ok(problem.reference.clone()),
+        "greedy" => {
+            let program = transform::greedy_factor(&problem.reference, &problem.sizes);
+            let ok = truthmill::verify(problem, &program)
+                .map_err(|e| anyhow::anyhow!("verify error: {e:?}"))?;
+            anyhow::ensure!(ok, "truthmill::verify rejected greedy transform");
+            Ok(program)
+        }
+        other => anyhow::bail!("unknown transform: {other}"),
+    }
 }
 
 fn problem_name(problem: &Problem) -> String {

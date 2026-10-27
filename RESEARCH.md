@@ -25,7 +25,8 @@ new equation sets drop in as data, heuristics must transfer.
   at toy sizes).
 
 Milestone 1 includes a profiling experiment on CCSD/CCD to rank H1–H4 before
-the HL loop invests in any heuristic surface.
+the HL loop invests in any heuristic surface. **Result (see Current state):
+H2 wins decisively.**
 
 ## Architecture
 
