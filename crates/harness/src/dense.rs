@@ -41,8 +41,15 @@ pub type Blocks = HashMap<BlockKey, Dense>;
 
 /// Collect every (tensor, domain pattern) pair used by the reference program.
 pub fn collect_patterns(problem: &Problem) -> BTreeMap<TensorId, Vec<Vec<DomainId>>> {
+    collect_patterns_in(&problem.reference)
+}
+
+/// Collect (tensor, domain pattern) pairs used by one program.
+pub fn collect_patterns_in(
+    program: &truthmill::Program,
+) -> BTreeMap<TensorId, Vec<Vec<DomainId>>> {
     let mut patterns: BTreeMap<TensorId, Vec<Vec<DomainId>>> = BTreeMap::new();
-    for definition in &problem.reference.values {
+    for definition in &program.values {
         let (code, args) = match definition {
             ValueDef::Einsum(op) => (&op.code, &op.args),
             ValueDef::LinComb(op) => (&op.code, &op.args),
@@ -154,10 +161,34 @@ pub fn project(block: &Dense, group: &[(Vec<usize>, i8)]) -> Dense {
     acc
 }
 
-/// Generate random input blocks for a problem, one per (tensor, pattern),
-/// projected onto the within-block symmetry group.
+/// Generate random input blocks for a problem, one per (tensor, pattern).
+/// Blocks related by a declared symmetry generator (possibly across domain
+/// patterns) share one randomly generated representative: the representative
+/// is projected onto its within-block stabilizer group, and related blocks are
+/// derived by permute+sign. This enforces cross-block symmetry relations, so
+/// candidates that exploit antisymmetry (e.g. gristmill's) check correctly.
 pub fn generate_inputs(problem: &Problem, seed: u64) -> Blocks {
-    let patterns = collect_patterns(problem);
+    generate_inputs_for(problem, &[], seed)
+}
+
+/// As `generate_inputs`, but also covering patterns used by extra programs
+/// (e.g. external candidates whose accesses differ from the reference).
+pub fn generate_inputs_for(
+    problem: &Problem,
+    extra_programs: &[&truthmill::Program],
+    seed: u64,
+) -> Blocks {
+    let mut patterns = collect_patterns(problem);
+    for program in extra_programs {
+        for (tensor, pats) in collect_patterns_in(program) {
+            let entry = patterns.entry(tensor).or_default();
+            for pat in pats {
+                if !entry.contains(&pat) {
+                    entry.push(pat);
+                }
+            }
+        }
+    }
     let mut blocks = HashMap::new();
     for (tensor, pats) in &patterns {
         let generators = problem
@@ -165,24 +196,53 @@ pub fn generate_inputs(problem: &Problem, seed: u64) -> Blocks {
             .get(tensor)
             .cloned()
             .unwrap_or_default();
-        for pattern in pats {
-            let dims: Vec<usize> = pattern
+        // Breadth-first over patterns linked by generators.
+        let mut filled: HashMap<Vec<u32>, ()> = HashMap::new();
+        for representative in pats {
+            let rep_key: Vec<u32> = representative.iter().map(|d| d.0).collect();
+            if filled.contains_key(&rep_key) {
+                continue;
+            }
+            // Generate the representative: random, projected on stabilizer.
+            let dims: Vec<usize> = representative
                 .iter()
                 .map(|d| problem.sizes[d] as usize)
                 .collect();
             let len: usize = dims.iter().product();
-            // Deterministic per-block seed.
             let mut key = seed;
-            for &d in pattern {
-                key = key.wrapping_mul(1_000_003).wrapping_add(d.0 as u64 + 7);
+            for &dm in representative {
+                key = key.wrapping_mul(1_000_003).wrapping_add(dm.0 as u64 + 7);
             }
             key = key.wrapping_mul(1_000_003).wrapping_add(tensor.0 as u64 + 13);
             let mut rng = ChaCha8Rng::seed_from_u64(key);
             let data: Vec<f64> = (0..len).map(|_| rng.random::<f64>() - 0.5).collect();
             let block = Dense { dims, data };
-            let group = stabilizer_group(&generators, pattern);
+            let group = stabilizer_group(&generators, representative);
             let block = project(&block, &group);
-            blocks.insert((tensor.0, pattern.iter().map(|d| d.0).collect()), block);
+            // BFS propagation along generators.
+            let mut queue = vec![(rep_key.clone(), block)];
+            while let Some((cur_key, cur_block)) = queue.pop() {
+                if blocks.contains_key(&(tensor.0, cur_key.clone())) {
+                    continue;
+                }
+                blocks.insert((tensor.0, cur_key.clone()), cur_block.clone());
+                filled.insert(cur_key.clone(), ());
+                for generator in &generators {
+                    // q[k] = cur[p[k]]: storage axis k holds logical axis p[k].
+                    let q: Vec<u32> = generator
+                        .permutation
+                        .iter()
+                        .map(|&p| cur_key[p])
+                        .collect();
+                    if filled.contains_key(&q)
+                        || !pats.iter().any(|pat| pat.iter().map(|d| d.0).eq(q.iter().cloned()))
+                    {
+                        continue;
+                    }
+                    let image = permute(&cur_block, &generator.permutation, generator.sign);
+                    queue.push((q, image));
+                }
+            }
         }
     }
     blocks

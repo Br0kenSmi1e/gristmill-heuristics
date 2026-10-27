@@ -37,6 +37,9 @@ enum Cmd {
         /// Program transform to apply before evaluation: none|greedy
         #[arg(long, default_value = "none")]
         transform: String,
+        /// External candidate Program JSON (e.g. gristmill-optimized); skips transform
+        #[arg(long)]
+        candidate: Option<PathBuf>,
         /// Layout planning: none|greedy-layout
         #[arg(long, default_value = "none")]
         layout: String,
@@ -81,6 +84,9 @@ enum Cmd {
         /// factmem: split n-ary einsums whose union product exceeds this (MB).
         #[arg(long, default_value = "256")]
         factmem_threshold_mb: u64,
+        /// External candidate Program JSON (e.g. gristmill-optimized); skips transform
+        #[arg(long)]
+        candidate: Option<PathBuf>,
     },
     /// Print symbolic FLOP terms for reference and greedy-factored programs.
     Flops {
@@ -156,13 +162,15 @@ fn main() -> Result<()> {
             sizes,
             seed,
             transform,
+            candidate,
             layout,
             penalty,
         } => {
             let name = stem(&problem);
             let problem = load_problem(&problem, &sizes)?;
-            let program = apply_transform(&problem, &transform, 256)?;
-            let (program, blocks) = apply_layout(&problem, program, &layout, seed,
+            let program = load_program(&problem, &transform, 256, candidate)?;
+            let orig = dense::generate_inputs_for(&problem, &[&program], seed);
+            let (program, blocks) = apply_layout_with(&problem, program, &layout, orig,
                 &layout2::PolicyParams::default())?;
             let expected = oracle::eval_program(&problem, &problem.reference, &blocks.orig)?;
             let tensor_blocks = interp::to_tensor_blocks_permuted(&blocks.permuted)?;
@@ -224,6 +232,7 @@ fn main() -> Result<()> {
             p_thresh,
             max_mem_mb,
             factmem_threshold_mb,
+            candidate,
         } => {
             let name = stem(&problem);
             let problem = load_problem(&problem, &sizes)?;
@@ -234,13 +243,15 @@ fn main() -> Result<()> {
                     max_mem_mb
                 );
             }
-            let program = apply_transform(&problem, &transform, 256)?;
+            let cand_stem = candidate.as_ref().map(|p| stem(p)).unwrap_or_default();
+            let program = load_program(&problem, &transform, factmem_threshold_mb, candidate)?;
+            let orig = dense::generate_inputs_for(&problem, &[&program], seed);
             let params = layout2::PolicyParams {
                 p_big: penalty,
                 p_small: p_small.unwrap_or(penalty),
                 thresh: p_thresh,
             };
-            let (program, blocks) = apply_layout(&problem, program, &layout, seed, &params)?;
+            let (program, blocks) = apply_layout_with(&problem, program, &layout, orig, &params)?;
             let tensor_blocks = interp::to_tensor_blocks_permuted(&blocks.permuted)?;
             let est = interp::estimate_memory(&program, &tensor_blocks, &problem.sizes, 1 << 30);
             if !est.risky_ops.is_empty() {
@@ -292,6 +303,7 @@ fn main() -> Result<()> {
             let record = serde_json::json!({
                 "kind": "time",
                 "transform": transform,
+                "candidate": cand_stem,
                 "layout": layout,
                 "problem": name,
                 "sizes": sizes_map(&problem),
@@ -393,6 +405,16 @@ fn apply_layout(
     params: &layout2::PolicyParams,
 ) -> Result<(truthmill::Program, LayoutResult)> {
     let orig = dense::generate_inputs(problem, seed);
+    apply_layout_with(problem, program, layout, orig, params)
+}
+
+fn apply_layout_with(
+    problem: &Problem,
+    program: truthmill::Program,
+    layout: &str,
+    orig: dense::Blocks,
+    params: &layout2::PolicyParams,
+) -> Result<(truthmill::Program, LayoutResult)> {
     match layout {
         "none" => {
             let permuted = layout::apply_layouts_to_blocks(&orig, &layout::Layouts::new());
@@ -427,6 +449,25 @@ fn apply_layout(
         }
         other => anyhow::bail!("unknown layout: {other}"),
     }
+}
+
+fn load_program(
+    problem: &Problem,
+    transform: &str,
+    factmem_threshold_mb: u64,
+    candidate: Option<PathBuf>,
+) -> Result<truthmill::Program> {
+    if let Some(path) = candidate {
+        let text = std::fs::read_to_string(&path)?;
+        let program: truthmill::Program =
+            serde_json::from_str(&text).map_err(anyhow::Error::msg)?;
+        let ok = truthmill::verify(problem, &program)
+            .map_err(|e| anyhow::anyhow!("verify error: {e:?}"))?;
+        anyhow::ensure!(ok, "candidate program failed truthmill::verify");
+        eprintln!("candidate verified: {}", path.display());
+        return Ok(program);
+    }
+    apply_transform(problem, transform, factmem_threshold_mb)
 }
 
 fn apply_transform(
