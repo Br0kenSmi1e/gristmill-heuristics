@@ -125,13 +125,32 @@ Measured ((16,64) unless noted, best-of-N medians):
   (16,64); CCSD(T) D3 input alone is 8.6GB at (16,64) -> ran at (8,32).
 - Thread-count changes the cost landscape: v2 wins shrink or invert at t16
   (memory-bound); penalty must be thread-conditioned.
+## HL loop iterations completed (see trials/ for raw data)
 
-## Next investment: the HL loop proper
+1. v0 per-use argmax layout -> CCSD 1.45x regression; diagnosed: multi-use
+   starvation.
+2. v1/v2 uniform entity cost model (blocks + intermediates, consumer-aware):
+   fixed v0 failure; exposed that full greedy splitting itself regresses CCSD
+   (0.53x) because the backend plans n-ary einsums well -> split only for
+   memory (factmem).
+3. Liveness freeing: fixed OOM, also large speed win (naive ccsd t16
+   1689 -> 743 ms).
+4. Penalty sweep on train: flat 2.7 fine; thread-conditioned penalties NOT
+   supported by data (within noise). Weak-signal learning; noted.
+5. cse_exact (exact-duplicate sharing; references contain up to 4x duplicate
+   contractions): small consistent win (ccsd t16 659 -> 627 ms).
+6. Final policy: {transform: cse-only / factmem-when-needed, layout v2,
+   penalty 2.7}. Held-out: adc2 1.42x/1.15x, ccsd_lambda 1.03x/1.11x,
+   ccsd_t 1.06x/1.10x, eom_ccsd 1.04x/0.89x (t1/t16). Geomean 1.13x t1,
+   1.06x t16. Residual failure: eom_ccsd t16 (small-op layout sensitivity at
+   high thread count; constant-penalty model inadequate there).
 
-Policy parameters to learn from train feedback (trials/ as memory):
-thread-conditioned mismatch penalty; weight exponent; candidate-layout
-inventory (beyond per-use ideals); LinComb fusion decisions. First
-diagnose the eom_ccsd t16 regression mechanistically (profile), then edit
-the policy, re-measure train, and only then re-check held-out transfer.
-Open H1-prime question: cross-term shared intermediates (untested; needs a
-CSE transform).
+## Next investment
+
+Measured per-op cost model (profile expensive ops under layout variants; fit
+penalty surface as function of op size x threads) replacing the binary
+penalty; then blockwise symmetry exploitation (the largest untouched lever:
+~4x FLOPs+memory on antisymmetric tensors); cross-term shared intermediates
+beyond exact duplicates (structural CSE up to permutation); size-ladder
+validation at larger v/o on a bigger machine; standalone Rust codegen for
+winning schedules (interpreter and emitter share the schedule IR).

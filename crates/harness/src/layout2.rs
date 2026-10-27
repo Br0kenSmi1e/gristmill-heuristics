@@ -21,6 +21,28 @@ use crate::layout::Layouts;
 /// block layouts: physical axis k = natural axis perm[k].
 pub type ValueLayouts = BTreeMap<usize, Vec<usize>>;
 
+/// Policy parameters (HL-tunable): a use whose op weight (union FLOPs) is
+/// below `thresh` pays `p_small` for a layout mismatch, heavier uses pay
+/// `p_big`. Motivation (measured): small ops are overhead-dominated and
+/// suffer ~3x from hostile layouts while gaining little from ideal ones;
+/// big GEMM ops see ~2.7x (t1) / ~1.4x (t16) from layout.
+#[derive(Clone, Copy, Debug)]
+pub struct PolicyParams {
+    pub p_big: f64,
+    pub p_small: f64,
+    pub thresh: f64,
+}
+
+impl Default for PolicyParams {
+    fn default() -> Self {
+        PolicyParams {
+            p_big: 2.7,
+            p_small: 2.7,
+            thresh: f64::INFINITY,
+        }
+    }
+}
+
 /// One use of a storage entity.
 struct Use {
     weight: f64,
@@ -108,7 +130,7 @@ fn ideal_lincomb_arg(code: &Code, arg_pos: usize) -> Option<Vec<usize>> {
     Some(perm)
 }
 
-fn pick(uses: &[Use], rank: usize, penalty: f64) -> Vec<usize> {
+fn pick(uses: &[Use], rank: usize, params: &PolicyParams) -> Vec<usize> {
     let natural: Vec<usize> = (0..rank).collect();
     let mut candidates: Vec<Vec<usize>> = vec![natural.clone()];
     for u in uses {
@@ -122,7 +144,12 @@ fn pick(uses: &[Use], rank: usize, penalty: f64) -> Vec<usize> {
         let cost: f64 = uses
             .iter()
             .map(|u| {
-                let p = if *cand == u.ideal { 1.0 } else { penalty };
+                let mismatch = if u.weight < params.thresh {
+                    params.p_small
+                } else {
+                    params.p_big
+                };
+                let p = if *cand == u.ideal { 1.0 } else { mismatch };
                 u.weight * p
             })
             .sum();
@@ -138,7 +165,7 @@ fn pick(uses: &[Use], rank: usize, penalty: f64) -> Vec<usize> {
 pub fn plan_layouts_v2(
     problem: &Problem,
     program: &Program,
-    penalty: f64,
+    params: &PolicyParams,
 ) -> (Layouts, ValueLayouts) {
     let mut block_uses: BTreeMap<(u32, Vec<u32>), Vec<Use>> = BTreeMap::new();
     let mut value_uses: BTreeMap<usize, Vec<Use>> = BTreeMap::new();
@@ -190,7 +217,7 @@ pub fn plan_layouts_v2(
         .into_iter()
         .map(|(key, uses)| {
             let rank = uses[0].ideal.len();
-            (key, pick(&uses, rank, penalty))
+            (key, pick(&uses, rank, params))
         })
         .collect();
     let output_ids: std::collections::BTreeSet<usize> =
@@ -204,7 +231,7 @@ pub fn plan_layouts_v2(
             if output_ids.contains(&id) {
                 return None;
             }
-            let chosen = pick(&uses, rank, penalty);
+            let chosen = pick(&uses, rank, params);
             if chosen.iter().enumerate().any(|(k, &p)| k != p) {
                 Some((id, chosen))
             } else {

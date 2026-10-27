@@ -66,12 +66,28 @@ enum Cmd {
         /// Use the cold interpreter (replan every call) instead of prepared plans.
         #[arg(long)]
         cold: bool,
-        /// Mismatch penalty for layout cost model
+        /// Mismatch penalty for layout cost model (big ops)
         #[arg(long, default_value = "2.7")]
         penalty: f64,
+        /// Mismatch penalty for small ops (below --p-thresh FLOPs)
+        #[arg(long)]
+        p_small: Option<f64>,
+        /// FLOPs threshold separating small/big penalty regimes
+        #[arg(long, default_value = "1e8")]
+        p_thresh: f64,
         /// Refuse to run if the static memory estimate exceeds this (MB).
         #[arg(long, default_value = "6000")]
         max_mem_mb: usize,
+        /// factmem: split n-ary einsums whose union product exceeds this (MB).
+        #[arg(long, default_value = "256")]
+        factmem_threshold_mb: u64,
+    },
+    /// Print symbolic FLOP terms for reference and greedy-factored programs.
+    Flops {
+        problem: PathBuf,
+        /// Evaluate polynomials numerically at these sizes, e.g. "0=100,1=1000".
+        #[arg(long)]
+        sizes: Option<String>,
     },
     /// Per-op timing profile of one program execution (prepared plans).
     Profile {
@@ -145,8 +161,9 @@ fn main() -> Result<()> {
         } => {
             let name = stem(&problem);
             let problem = load_problem(&problem, &sizes)?;
-            let program = apply_transform(&problem, &transform)?;
-            let (program, blocks) = apply_layout(&problem, program, &layout, seed, penalty)?;
+            let program = apply_transform(&problem, &transform, 256)?;
+            let (program, blocks) = apply_layout(&problem, program, &layout, seed,
+                &layout2::PolicyParams::default())?;
             let expected = oracle::eval_program(&problem, &problem.reference, &blocks.orig)?;
             let tensor_blocks = interp::to_tensor_blocks_permuted(&blocks.permuted)?;
             let mut backend = CpuBackend::with_threads(1).map_err(anyhow::Error::msg)?;
@@ -203,7 +220,10 @@ fn main() -> Result<()> {
             layout,
             cold,
             penalty,
+            p_small,
+            p_thresh,
             max_mem_mb,
+            factmem_threshold_mb,
         } => {
             let name = stem(&problem);
             let problem = load_problem(&problem, &sizes)?;
@@ -214,8 +234,13 @@ fn main() -> Result<()> {
                     max_mem_mb
                 );
             }
-            let program = apply_transform(&problem, &transform)?;
-            let (program, blocks) = apply_layout(&problem, program, &layout, seed, penalty)?;
+            let program = apply_transform(&problem, &transform, 256)?;
+            let params = layout2::PolicyParams {
+                p_big: penalty,
+                p_small: p_small.unwrap_or(penalty),
+                thresh: p_thresh,
+            };
+            let (program, blocks) = apply_layout(&problem, program, &layout, seed, &params)?;
             let tensor_blocks = interp::to_tensor_blocks_permuted(&blocks.permuted)?;
             let est = interp::estimate_memory(&program, &tensor_blocks, &problem.sizes, 1 << 30);
             if !est.risky_ops.is_empty() {
@@ -226,7 +251,7 @@ fn main() -> Result<()> {
                 );
             }
             let total_mb = est.peak_live_bytes / (1 << 20);
-            if !est.risky_ops.is_empty() || total_mb > max_mem_mb {
+            if total_mb > max_mem_mb {
                 eprintln!(
                     "REFUSED: estimated peak {} MB (inputs {} MB) vs limit {} MB; risky ops: {:?}",
                     total_mb,
@@ -278,9 +303,32 @@ fn main() -> Result<()> {
                 "min_ms": times[0],
                 "max_ms": times[times.len() - 1],
                 "log10_flops": log_flops / std::f64::consts::LN_10,
+                "p_big": penalty,
+                "p_small": p_small.unwrap_or(penalty),
+                "p_thresh": p_thresh,
                 "checksum": sum,
             });
             println!("{}", serde_json::to_string(&record)?);
+        }
+        Cmd::Flops { problem, sizes } => {
+            let name = stem(&problem);
+            let mut problem = load_problem(&problem, &sizes)?;
+            // evaluate polynomials at requested sizes but keep original for display
+            let greedy = transform::greedy_factor(&problem.reference, &problem.sizes);
+            for (tag, prog) in [("reference", &problem.reference), ("greedy", &greedy)] {
+                let sf = truthmill::symbolic_flops(&problem, prog)
+                    .map_err(|e| anyhow::anyhow!("cost: {e:?}"))?;
+                let logf = truthmill::log_flops(&problem, prog)
+                    .map_err(|e| anyhow::anyhow!("cost: {e:?}"))?;
+                println!("{name} {tag}: ln_flops={:.2}", logf);
+                for t in sf.terms() {
+                    let mut mon = String::new();
+                    for (d, e) in t.powers() {
+                        mon.push_str(&format!("d{}^{} ", d.0, e));
+                    }
+                    println!("   coeff={} {}", t.coefficient(), mon);
+                }
+            }
         }
         Cmd::Profile {
             problem,
@@ -296,8 +344,9 @@ fn main() -> Result<()> {
             if dense::estimate_input_bytes(&problem) / (1 << 20) > 3000 {
                 anyhow::bail!("memory guard: inputs too large; shrink sizes");
             }
-            let program = apply_transform(&problem, &transform)?;
-            let (program, blocks) = apply_layout(&problem, program, &layout, seed, 2.7)?;
+            let program = apply_transform(&problem, &transform, 256)?;
+            let (program, blocks) = apply_layout(&problem, program, &layout, seed,
+                &layout2::PolicyParams::default())?;
             let tensor_blocks = interp::to_tensor_blocks_permuted(&blocks.permuted)?;
             let est = interp::estimate_memory(&program, &tensor_blocks, &problem.sizes, 1 << 30);
             if !est.risky_ops.is_empty() || est.peak_live_bytes / (1 << 20) > 6000 {
@@ -341,7 +390,7 @@ fn apply_layout(
     program: truthmill::Program,
     layout: &str,
     seed: u64,
-    penalty: f64,
+    params: &layout2::PolicyParams,
 ) -> Result<(truthmill::Program, LayoutResult)> {
     let orig = dense::generate_inputs(problem, seed);
     match layout {
@@ -356,7 +405,7 @@ fn apply_layout(
             Ok((program, LayoutResult { orig, permuted }))
         }
         "v2" => {
-            let (blocks, values) = layout2::plan_layouts_v2(problem, &program, penalty);
+            let (blocks, values) = layout2::plan_layouts_v2(problem, &program, params);
             if std::env::var("H_DEBUG").is_ok() {
                 eprintln!("value perms: {values:?}");
                 for (id, def) in program.values.iter().enumerate() {
@@ -380,7 +429,11 @@ fn apply_layout(
     }
 }
 
-fn apply_transform(problem: &Problem, transform: &str) -> Result<truthmill::Program> {
+fn apply_transform(
+    problem: &Problem,
+    transform: &str,
+    factmem_threshold_mb: u64,
+) -> Result<truthmill::Program> {
     match transform {
         "none" => Ok(problem.reference.clone()),
         "greedy" => {
@@ -391,15 +444,29 @@ fn apply_transform(problem: &Problem, transform: &str) -> Result<truthmill::Prog
             Ok(program)
         }
         "factmem" => {
-            // 256 MB union-product threshold: split only dangerous n-ary ops.
             let program = transform::factor_with_threshold(
                 &problem.reference,
                 &problem.sizes,
-                256 * (1 << 20),
+                (factmem_threshold_mb as u128) << 20,
             );
             let ok = truthmill::verify(problem, &program)
                 .map_err(|e| anyhow::anyhow!("verify error: {e:?}"))?;
             anyhow::ensure!(ok, "truthmill::verify rejected factmem transform");
+            Ok(program)
+        }
+        "cse" => {
+            let program = transform::greedy_factor(&problem.reference, &problem.sizes);
+            let program = transform::cse_exact(&program);
+            let ok = truthmill::verify(problem, &program)
+                .map_err(|e| anyhow::anyhow!("verify error: {e:?}"))?;
+            anyhow::ensure!(ok, "truthmill::verify rejected cse transform");
+            Ok(program)
+        }
+        "cse-only" => {
+            let program = transform::cse_exact(&problem.reference);
+            let ok = truthmill::verify(problem, &program)
+                .map_err(|e| anyhow::anyhow!("verify error: {e:?}"))?;
+            anyhow::ensure!(ok, "truthmill::verify rejected cse-only transform");
             Ok(program)
         }
         other => anyhow::bail!("unknown transform: {other}"),

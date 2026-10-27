@@ -294,3 +294,94 @@ fn remap_refs(definition: &ValueDef, remap: &BTreeMap<u32, u32>) -> ValueDef {
         }),
     }
 }
+
+/// Exact-duplicate CSE: collapse einsum definitions that are identical up to
+/// label renaming (same args, same per-axis domains, same contraction
+/// structure, same coefficient). truthmill's SSA treats duplicate definitions
+/// as recomputation; this pass shares them. LinComb ops are left alone.
+pub fn cse_exact(program: &Program) -> Program {
+    use std::collections::HashMap;
+    let mut values: Vec<ValueDef> = Vec::new();
+    let mut remap: BTreeMap<u32, u32> = BTreeMap::new();
+    let mut seen: HashMap<Vec<u8>, u32> = HashMap::new();
+
+    fn signature(op: &Einsum) -> Vec<u8> {
+        // Canonical relabeling: labels renamed 0,1,2.. by first appearance in
+        // inputs-then-output order. Encodes args, domain sequences, structure,
+        // and coefficient; invariant under per-code label renaming.
+        let mut sig = Vec::new();
+        let mut canon: BTreeMap<u32, u32> = BTreeMap::new();
+        let mut next = 0u32;
+        fn enc(
+            sig: &mut Vec<u8>,
+            l: u32,
+            d: u32,
+            canon: &mut BTreeMap<u32, u32>,
+            next: &mut u32,
+        ) {
+            let c = *canon.entry(l).or_insert_with(|| {
+                let v = *next;
+                *next += 1;
+                v
+            });
+            sig.extend_from_slice(&c.to_le_bytes());
+            sig.extend_from_slice(&d.to_le_bytes());
+        }
+        for arg in &op.args {
+            match arg {
+                ValueRef::Tensor(t) => {
+                    sig.push(0xFF);
+                    sig.extend_from_slice(&t.0.to_le_bytes());
+                }
+                ValueRef::Value(v) => {
+                    sig.push(0xFE);
+                    sig.extend_from_slice(&v.0.to_le_bytes());
+                }
+            }
+        }
+        for labels in &op.code.inputs {
+            sig.push(0xFD);
+            for l in labels {
+                enc(&mut sig, l.0, op.code.domains[l].0, &mut canon, &mut next);
+            }
+        }
+        sig.push(0xFC);
+        for l in &op.code.output {
+            enc(&mut sig, l.0, op.code.domains[l].0, &mut canon, &mut next);
+        }
+        sig.push(0xFB);
+        sig.extend_from_slice(&op.coeff.numer().to_le_bytes());
+        sig.extend_from_slice(&op.coeff.denom().to_le_bytes());
+        sig
+    }
+
+    for (old_id, definition) in program.values.iter().enumerate() {
+        let remapped = remap_refs(definition, &remap);
+        match remapped {
+            ValueDef::Einsum(op) => {
+                let sig = signature(&op);
+                if let Some(&canonical) = seen.get(&sig) {
+                    // Duplicate: alias, do not emit.
+                    remap.insert(old_id as u32, canonical);
+                } else {
+                    let new_id = values.len() as u32;
+                    seen.insert(sig, new_id);
+                    remap.insert(old_id as u32, new_id);
+                    values.push(ValueDef::Einsum(op));
+                }
+            }
+            other => {
+                remap.insert(old_id as u32, values.len() as u32);
+                values.push(other);
+            }
+        }
+    }
+    Program {
+        values,
+        outputs: program
+            .outputs
+            .iter()
+            .map(|o| truthmill::ValueId(remap[&o.0]))
+            .collect(),
+    }
+}
