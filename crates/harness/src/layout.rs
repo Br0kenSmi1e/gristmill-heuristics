@@ -109,16 +109,24 @@ fn ideal_output_order(code: &Code) -> Option<Vec<usize>> {
     perm
 }
 
-/// Compute block layouts from the program: for every block use, record the
-/// ideal layout weighted by the op's union FLOPs; take the argmax per block.
+/// Compute block layouts from the program with a global cost model:
+/// candidate layouts per block = {identity} + per-use ideals; score =
+/// sum over uses of union_flops(use) * penalty(use, layout), where
+/// penalty = 1 if layout == ideal(use), else `mismatch_penalty`.
+/// This fixes the v0 failure mode (argmax by heaviest use starving all
+/// other uses of multi-use blocks).
 pub fn plan_layouts(problem: &Problem, program: &Program) -> Layouts {
+    plan_layouts_v1(problem, program, 2.7)
+}
+
+pub fn plan_layouts_v1(problem: &Problem, program: &Program, mismatch_penalty: f64) -> Layouts {
     let mut uses: BTreeMap<BlockKey, Vec<Use>> = BTreeMap::new();
     for definition in &program.values {
         let (code, args) = match definition {
             ValueDef::Einsum(op) => (&op.code, &op.args),
             ValueDef::LinComb(op) => (&op.code, &op.args),
         };
-        let weight = union_log10_flops(code, &problem.sizes);
+        let weight = 10f64.powf(union_log10_flops(code, &problem.sizes));
         for (pos, (arg, labels)) in args.iter().zip(&code.inputs).enumerate() {
             if let ValueRef::Tensor(tensor) = arg {
                 let pattern: Vec<u32> = labels.iter().map(|l| code.domains[l].0).collect();
@@ -133,16 +141,31 @@ pub fn plan_layouts(problem: &Problem, program: &Program) -> Layouts {
         return layouts;
     }
     for (key, uses) in uses {
-        // Aggregate weight per distinct ideal layout.
-        let mut by_layout: BTreeMap<Vec<usize>, f64> = BTreeMap::new();
-        for u in uses {
-            *by_layout.entry(u.ideal).or_default() += u.weight;
+        let rank = uses[0].ideal.len();
+        let mut candidates: Vec<Vec<usize>> = vec![(0..rank).collect()];
+        for u in &uses {
+            if !candidates.contains(&u.ideal) {
+                candidates.push(u.ideal.clone());
+            }
         }
-        let best = by_layout
-            .into_iter()
-            .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
-            .map(|(l, _)| l)
-            .unwrap();
+        let mut best: Option<(Vec<usize>, f64)> = None;
+        for cand in &candidates {
+            let cost: f64 = uses
+                .iter()
+                .map(|u| {
+                    let p = if *cand == u.ideal { 1.0 } else { mismatch_penalty };
+                    u.weight * p
+                })
+                .sum();
+            let better = match &best {
+                None => true,
+                Some((_, c)) => cost < *c,
+            };
+            if better {
+                best = Some((cand.clone(), cost));
+            }
+        }
+        let best = best.unwrap().0;
         if let Ok(only) = std::env::var("H_ONLY_BLOCK") {
             let want = format!("{}:{:?}", key.0, key.1);
             if want != only {
@@ -174,24 +197,18 @@ pub fn apply_layouts_to_blocks(blocks: &Blocks, layouts: &Layouts) -> PermutedBl
 /// output reordering is positional: every consumer's label list for that
 /// value must be permuted by the same permutation (two-pass).
 pub fn apply_layouts_to_program(program: &Program, layouts: &Layouts) -> Program {
-    // Pass 1: desired output permutation per value (None = keep).
-    let mut value_perms: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
-    let no_inter = std::env::var("H_NO_INTER").is_ok();
-    for (id, definition) in program.values.iter().enumerate() {
-        if no_inter { break; }
-        if let ValueDef::Einsum(op) = definition {
-            if let Some(perm) = ideal_output_order(&op.code) {
-                if !perm.iter().enumerate().all(|(k, &p)| k == p) {
-                    value_perms.insert(id, perm);
-                }
-            }
-        }
-    }
+    apply_layouts_to_program_v2(program, &BTreeMap::new())
+}
+
+/// v2 entry point: value output perms come from the planner.
+pub fn apply_layouts_to_program_v2(
+    program: &Program,
+    value_perms: &BTreeMap<usize, Vec<usize>>,
+) -> Program {
     // Pass 2: rewrite.
     let mut values = Vec::with_capacity(program.values.len());
     for (id, definition) in program.values.iter().enumerate() {
-        let _ = layouts; // block layouts are applied at resolve time, not here
-    let mut rewrite_code = |code: &mut Code, args: &[ValueRef]| {
+        let rewrite_code = |code: &mut Code, args: &[ValueRef]| {
             for (arg, labels) in args.iter().zip(code.inputs.iter_mut()) {
                 match arg {
                     // Block layouts are handled by the interpreter at resolve
@@ -228,6 +245,12 @@ pub fn apply_layouts_to_program(program: &Program, layouts: &Layouts) -> Program
             ValueDef::LinComb(op) => {
                 let mut code = op.code.clone();
                 rewrite_code(&mut code, &op.args);
+                if let Some(perm) = value_perms.get(&id) {
+                    let old = code.output.clone();
+                    for (k, &p) in perm.iter().enumerate() {
+                        code.output[k] = old[p];
+                    }
+                }
                 ValueDef::LinComb(truthmill::LinComb {
                     coeff: op.coeff.clone(),
                     code,

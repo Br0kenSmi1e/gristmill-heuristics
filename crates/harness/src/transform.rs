@@ -207,6 +207,19 @@ fn factor_einsum(
 
 /// Apply greedy factorization to every n-ary einsum in the program.
 pub fn greedy_factor(program: &Program, sizes: &BTreeMap<DomainId, u64>) -> Program {
+    factor_with_threshold(program, sizes, 0)
+}
+
+/// Factor only n-ary einsums whose union-index product exceeds
+/// `threshold_bytes` (memory-bounded factoring): the backend handles small
+/// n-ary ops well internally, but large ones can materialize huge internal
+/// temporaries. Splitting them into greedy binary chains bounds every
+/// intermediate by construction.
+pub fn factor_with_threshold(
+    program: &Program,
+    sizes: &BTreeMap<DomainId, u64>,
+    threshold_bytes: u128,
+) -> Program {
     let mut values: Vec<ValueDef> = Vec::new();
     let mut remap: BTreeMap<u32, u32> = BTreeMap::new();
     for (old_id, definition) in program.values.iter().enumerate() {
@@ -214,6 +227,27 @@ pub fn greedy_factor(program: &Program, sizes: &BTreeMap<DomainId, u64>) -> Prog
         let remapped = remap_refs(definition, &remap);
         let new_def = match remapped {
             ValueDef::Einsum(op) => {
+                let needs = op.args.len() > 2 && {
+                    let mut labels: Vec<u32> = op.code.output.iter().map(|l| l.0).collect();
+                    for input in &op.code.inputs {
+                        for l in input {
+                            if !labels.contains(&l.0) {
+                                labels.push(l.0);
+                            }
+                        }
+                    }
+                    let union: u128 = labels
+                        .iter()
+                        .map(|l| sizes[&op.code.domains[&IndexId(*l)]] as u128)
+                        .product::<u128>()
+                        * 8;
+                    union > threshold_bytes
+                };
+                if !needs {
+                    remap.insert(old_id as u32, values.len() as u32);
+                    values.push(ValueDef::Einsum(op));
+                    continue;
+                }
                 // Intermediates occupy the next slots in `values`, so fresh
                 // ids start at values.len().
                 let mut emission = Vec::new();

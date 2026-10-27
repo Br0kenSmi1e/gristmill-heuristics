@@ -4,6 +4,7 @@
 mod dense;
 mod interp;
 mod layout;
+mod layout2;
 mod oracle;
 mod transform;
 
@@ -39,6 +40,9 @@ enum Cmd {
         /// Layout planning: none|greedy-layout
         #[arg(long, default_value = "none")]
         layout: String,
+        /// Mismatch penalty for layout cost model
+        #[arg(long, default_value = "2.7")]
+        penalty: f64,
     },
     /// Steady-state timing of the reference program with prepared plans.
     Time {
@@ -62,6 +66,12 @@ enum Cmd {
         /// Use the cold interpreter (replan every call) instead of prepared plans.
         #[arg(long)]
         cold: bool,
+        /// Mismatch penalty for layout cost model
+        #[arg(long, default_value = "2.7")]
+        penalty: f64,
+        /// Refuse to run if the static memory estimate exceeds this (MB).
+        #[arg(long, default_value = "6000")]
+        max_mem_mb: usize,
     },
     /// Per-op timing profile of one program execution (prepared plans).
     Profile {
@@ -96,6 +106,10 @@ fn parse_sizes(problem: &mut Problem, overrides: &Option<String>) -> Result<()> 
     Ok(())
 }
 
+fn stem(path: &PathBuf) -> String {
+    path.file_stem().unwrap().to_string_lossy().to_string()
+}
+
 fn load_problem(path: &PathBuf, sizes: &Option<String>) -> Result<Problem> {
     let text = std::fs::read_to_string(path).with_context(|| format!("reading {path:?}"))?;
     let mut problem = Problem::from_json(&text).map_err(anyhow::Error::msg)?;
@@ -105,6 +119,20 @@ fn load_problem(path: &PathBuf, sizes: &Option<String>) -> Result<Problem> {
 }
 
 fn main() -> Result<()> {
+    // Hard address-space backstop (default 10 GB, override with H_RLIMIT_GB):
+    // a runaway allocation aborts this process instead of the machine.
+    let limit_gb: u64 = std::env::var("H_RLIMIT_GB")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(10);
+    unsafe {
+        let bytes = limit_gb * (1u64 << 30);
+        let rl = libc::rlimit {
+            rlim_cur: bytes,
+            rlim_max: bytes,
+        };
+        libc::setrlimit(libc::RLIMIT_AS, &rl);
+    }
     let cli = Cli::parse();
     match cli.cmd {
         Cmd::Check {
@@ -113,10 +141,12 @@ fn main() -> Result<()> {
             seed,
             transform,
             layout,
+            penalty,
         } => {
+            let name = stem(&problem);
             let problem = load_problem(&problem, &sizes)?;
             let program = apply_transform(&problem, &transform)?;
-            let (program, blocks) = apply_layout(&problem, program, &layout, seed)?;
+            let (program, blocks) = apply_layout(&problem, program, &layout, seed, penalty)?;
             let expected = oracle::eval_program(&problem, &problem.reference, &blocks.orig)?;
             let tensor_blocks = interp::to_tensor_blocks_permuted(&blocks.permuted)?;
             let mut backend = CpuBackend::with_threads(1).map_err(anyhow::Error::msg)?;
@@ -150,7 +180,7 @@ fn main() -> Result<()> {
                 "kind": "check",
                 "transform": transform,
                 "layout": layout,
-                "problem": problem_name(&problem),
+                "problem": name,
                 "sizes": sizes_map(&problem),
                 "seed": seed,
                 "outputs": report,
@@ -172,11 +202,41 @@ fn main() -> Result<()> {
             transform,
             layout,
             cold,
+            penalty,
+            max_mem_mb,
         } => {
+            let name = stem(&problem);
             let problem = load_problem(&problem, &sizes)?;
+            let input_mb = dense::estimate_input_bytes(&problem) / (1 << 20);
+            if input_mb > max_mem_mb / 2 {
+                anyhow::bail!(
+                    "memory guard: inputs alone need {input_mb} MB (limit {} MB); shrink sizes",
+                    max_mem_mb
+                );
+            }
             let program = apply_transform(&problem, &transform)?;
-            let (program, blocks) = apply_layout(&problem, program, &layout, seed)?;
+            let (program, blocks) = apply_layout(&problem, program, &layout, seed, penalty)?;
             let tensor_blocks = interp::to_tensor_blocks_permuted(&blocks.permuted)?;
+            let est = interp::estimate_memory(&program, &tensor_blocks, &problem.sizes, 1 << 30);
+            if !est.risky_ops.is_empty() {
+                eprintln!(
+                    "WARNING: {} n-ary einsums with >1GB union intermediates: {:?}                      (backend-internal temporaries may exceed estimates)",
+                    est.risky_ops.len(),
+                    est.risky_ops
+                );
+            }
+            let total_mb = est.peak_live_bytes / (1 << 20);
+            if !est.risky_ops.is_empty() || total_mb > max_mem_mb {
+                eprintln!(
+                    "REFUSED: estimated peak {} MB (inputs {} MB) vs limit {} MB; risky ops: {:?}",
+                    total_mb,
+                    est.input_bytes / (1 << 20),
+                    max_mem_mb,
+                    est.risky_ops
+                );
+                anyhow::bail!("memory guard tripped");
+            }
+            drop(blocks); // free original + dense copies before timing
             let mut backend =
                 CpuBackend::with_threads(threads).map_err(anyhow::Error::msg)?;
             let log_flops = truthmill::log_flops(&problem, &program)
@@ -208,7 +268,7 @@ fn main() -> Result<()> {
                 "kind": "time",
                 "transform": transform,
                 "layout": layout,
-                "problem": problem_name(&problem),
+                "problem": name,
                 "sizes": sizes_map(&problem),
                 "threads": threads,
                 "mode": if cold { "cold" } else { "prepared" },
@@ -231,10 +291,18 @@ fn main() -> Result<()> {
             transform,
             layout,
         } => {
+            let name = stem(&problem);
             let problem = load_problem(&problem, &sizes)?;
+            if dense::estimate_input_bytes(&problem) / (1 << 20) > 3000 {
+                anyhow::bail!("memory guard: inputs too large; shrink sizes");
+            }
             let program = apply_transform(&problem, &transform)?;
-            let (program, blocks) = apply_layout(&problem, program, &layout, seed)?;
+            let (program, blocks) = apply_layout(&problem, program, &layout, seed, 2.7)?;
             let tensor_blocks = interp::to_tensor_blocks_permuted(&blocks.permuted)?;
+            let est = interp::estimate_memory(&program, &tensor_blocks, &problem.sizes, 1 << 30);
+            if !est.risky_ops.is_empty() || est.peak_live_bytes / (1 << 20) > 6000 {
+                anyhow::bail!("memory guard tripped: {:?}", est.risky_ops);
+            }
             let mut backend = CpuBackend::with_threads(threads).map_err(anyhow::Error::msg)?;
             let profiles = interp::profile_ops(&program, &tensor_blocks, &mut backend, iters, &problem.sizes)?;
             let total: f64 = profiles.iter().map(|p| p.median_ms).sum();
@@ -251,7 +319,7 @@ fn main() -> Result<()> {
                 "kind": "profile",
                 "transform": transform,
                 "layout": layout,
-                "problem": problem_name(&problem),
+                "problem": name,
                 "sizes": sizes_map(&problem),
                 "threads": threads,
                 "total_median_ms": total,
@@ -273,6 +341,7 @@ fn apply_layout(
     program: truthmill::Program,
     layout: &str,
     seed: u64,
+    penalty: f64,
 ) -> Result<(truthmill::Program, LayoutResult)> {
     let orig = dense::generate_inputs(problem, seed);
     match layout {
@@ -281,12 +350,30 @@ fn apply_layout(
             Ok((program, LayoutResult { orig, permuted }))
         }
         "greedy-layout" => {
-            if std::env::var("H_DEBUG").is_ok() {
-                layout::debug_dump(problem, &program);
-            }
             let layouts = layout::plan_layouts(problem, &program);
             let program = layout::apply_layouts_to_program(&program, &layouts);
             let permuted = layout::apply_layouts_to_blocks(&orig, &layouts);
+            Ok((program, LayoutResult { orig, permuted }))
+        }
+        "v2" => {
+            let (blocks, values) = layout2::plan_layouts_v2(problem, &program, penalty);
+            if std::env::var("H_DEBUG").is_ok() {
+                eprintln!("value perms: {values:?}");
+                for (id, def) in program.values.iter().enumerate() {
+                    match def {
+                        truthmill::ValueDef::Einsum(op) => eprintln!(
+                            "v{id} E out={:?} in={:?} args={:?}",
+                            op.code.output, op.code.inputs, op.args
+                        ),
+                        truthmill::ValueDef::LinComb(op) => eprintln!(
+                            "v{id} L out={:?} in={:?} args={:?}",
+                            op.code.output, op.code.inputs, op.args
+                        ),
+                    }
+                }
+            }
+            let program = layout::apply_layouts_to_program_v2(&program, &values);
+            let permuted = layout::apply_layouts_to_blocks(&orig, &blocks);
             Ok((program, LayoutResult { orig, permuted }))
         }
         other => anyhow::bail!("unknown layout: {other}"),
@@ -301,6 +388,18 @@ fn apply_transform(problem: &Problem, transform: &str) -> Result<truthmill::Prog
             let ok = truthmill::verify(problem, &program)
                 .map_err(|e| anyhow::anyhow!("verify error: {e:?}"))?;
             anyhow::ensure!(ok, "truthmill::verify rejected greedy transform");
+            Ok(program)
+        }
+        "factmem" => {
+            // 256 MB union-product threshold: split only dangerous n-ary ops.
+            let program = transform::factor_with_threshold(
+                &problem.reference,
+                &problem.sizes,
+                256 * (1 << 20),
+            );
+            let ok = truthmill::verify(problem, &program)
+                .map_err(|e| anyhow::anyhow!("verify error: {e:?}"))?;
+            anyhow::ensure!(ok, "truthmill::verify rejected factmem transform");
             Ok(program)
         }
         other => anyhow::bail!("unknown transform: {other}"),

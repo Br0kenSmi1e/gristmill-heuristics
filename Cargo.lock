@@ -575,6 +575,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "libc",
  "rand",
  "rand_chacha",
  "serde_json",

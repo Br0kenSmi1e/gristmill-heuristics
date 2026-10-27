@@ -82,7 +82,7 @@ pub enum OpPlan {
 
 fn resolve<'a>(
     blocks: &'a TensorBlocks,
-    values: &'a [Tensor],
+    values: &'a [Option<Tensor>],
     reference: ValueRef,
     labels: &[truthmill::IndexId],
     code: &Code,
@@ -96,7 +96,12 @@ fn resolve<'a>(
             let identity = perm.iter().enumerate().all(|(k, &p)| k == p);
             Ok((block, if identity { None } else { Some(perm) }))
         }
-        ValueRef::Value(id) => Ok((&values[id.0 as usize], None)),
+        ValueRef::Value(id) => Ok((
+            values[id.0 as usize]
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("value {} freed too early", id.0))?,
+            None,
+        )),
     }
 }
 
@@ -104,10 +109,11 @@ fn resolve<'a>(
 /// Prepare all einsum plans once (iterative regime), evaluating shapes with a
 /// scratch single-thread backend.
 pub fn prepare(program: &Program, blocks: &TensorBlocks) -> Result<Vec<OpPlan>> {
-    let mut values: Vec<Tensor> = Vec::new();
+    let mut values: Vec<Option<Tensor>> = Vec::new();
+    let last = last_use(program);
     let mut backend = CpuBackend::with_threads(1).map_err(anyhow::Error::msg)?;
     let mut ops = Vec::new();
-    for definition in &program.values {
+    for (n, definition) in program.values.iter().enumerate() {
         match definition {
             ValueDef::Einsum(op) => {
                 let (_, output) = subscripts(&op.code);
@@ -129,7 +135,8 @@ pub fn prepare(program: &Program, blocks: &TensorBlocks) -> Result<Vec<OpPlan>> 
                     None
                 };
                 let value = plan.execute(&tensors, &mut backend).map_err(anyhow::Error::msg)?;
-                values.push(value);
+                values.push(Some(value));
+                free_dead(&mut values, &last, n);
                 ops.push(OpPlan::Einsum { plan, scale });
             }
             ValueDef::LinComb(op) => {
@@ -149,7 +156,8 @@ pub fn prepare(program: &Program, blocks: &TensorBlocks) -> Result<Vec<OpPlan>> 
                     }
                     permutes.push(plan);
                 }
-                values.push(shape_value.expect("LinComb with no args"));
+                values.push(Some(shape_value.expect("LinComb with no args")));
+                free_dead(&mut values, &last, n);
                 ops.push(OpPlan::LinComb {
                     permutes,
                     coeffs: op.coeff.iter().map(coeff_f64).collect(),
@@ -160,6 +168,42 @@ pub fn prepare(program: &Program, blocks: &TensorBlocks) -> Result<Vec<OpPlan>> 
     Ok(ops)
 }
 
+/// Last-use index per SSA value (values are dropped right after).
+fn last_use(program: &Program) -> Vec<usize> {
+    let mut last = vec![usize::MAX; program.values.len()];
+    let mut note = |v: usize, at: usize, last: &mut Vec<usize>| {
+        if last[v] == usize::MAX {
+            last[v] = at;
+        } else {
+            last[v] = last[v].max(at);
+        }
+    };
+    for (n, definition) in program.values.iter().enumerate() {
+        let args = match definition {
+            ValueDef::Einsum(op) => &op.args,
+            ValueDef::LinComb(op) => &op.args,
+        };
+        for arg in args {
+            if let ValueRef::Value(v) = arg {
+                note(v.0 as usize, n, &mut last);
+            }
+        }
+    }
+    for o in &program.outputs {
+        last[o.0 as usize] = usize::MAX - 1; // keep outputs until the end
+    }
+    last
+}
+
+/// Free values whose last use is at or before `at`.
+fn free_dead(values: &mut [Option<Tensor>], last: &[usize], at: usize) {
+    for (v, slot) in values.iter_mut().enumerate() {
+        if last[v] <= at {
+            *slot = None;
+        }
+    }
+}
+
 /// Execute one full iteration of `program` using prepared plans.
 pub fn run_prepared(
     program: &Program,
@@ -167,8 +211,9 @@ pub fn run_prepared(
     blocks: &TensorBlocks,
     backend: &mut CpuBackend,
 ) -> Result<Vec<Tensor>> {
-    let mut values: Vec<Tensor> = Vec::with_capacity(program.values.len());
-    for (definition, plan) in program.values.iter().zip(plans) {
+    let mut values: Vec<Option<Tensor>> = Vec::with_capacity(program.values.len());
+    let last = last_use(program);
+    for (n, (definition, plan)) in program.values.iter().zip(plans).enumerate() {
         match (definition, plan) {
             (
                 ValueDef::Einsum(op),
@@ -189,7 +234,7 @@ pub fn run_prepared(
                         .mul(scalar, backend)
                         .map_err(anyhow::Error::msg)?;
                 }
-                values.push(value);
+                values.push(Some(value));
             }
             (
                 ValueDef::LinComb(op),
@@ -216,12 +261,12 @@ pub fn run_prepared(
                         Some(a) => a.add(&term, backend).map_err(anyhow::Error::msg)?,
                     });
                 }
-                values.push(acc.expect("LinComb with no args"));
+                values.push(Some(acc.expect("LinComb with no args")));
             }
             _ => anyhow::bail!("plan/program mismatch"),
         }
+        free_dead(&mut values, &last, n);
     }
-    let mut values: Vec<Option<Tensor>> = values.into_iter().map(Some).collect();
     Ok(program
         .outputs
         .iter()
@@ -235,8 +280,9 @@ pub fn run_cold(
     blocks: &TensorBlocks,
     backend: &mut CpuBackend,
 ) -> Result<Vec<Tensor>> {
-    let mut values: Vec<Tensor> = Vec::with_capacity(program.values.len());
-    for definition in &program.values {
+    let mut values: Vec<Option<Tensor>> = Vec::with_capacity(program.values.len());
+    let last = last_use(program);
+    for (n, definition) in program.values.iter().enumerate() {
         match definition {
             ValueDef::Einsum(op) => {
                 let (_, output) = subscripts(&op.code);
@@ -259,7 +305,7 @@ pub fn run_cold(
                         .map_err(anyhow::Error::msg)?;
                     value = value.mul(&scalar, backend).map_err(anyhow::Error::msg)?;
                 }
-                values.push(value);
+                values.push(Some(value));
             }
             ValueDef::LinComb(op) => {
                 let (_, output) = subscripts(&op.code);
@@ -285,11 +331,11 @@ pub fn run_cold(
                         Some(a) => a.add(&term, backend).map_err(anyhow::Error::msg)?,
                     });
                 }
-                values.push(acc.expect("LinComb with no args"));
+                values.push(Some(acc.expect("LinComb with no args")));
             }
         }
+        free_dead(&mut values, &last, n);
     }
-    let mut values: Vec<Option<Tensor>> = values.into_iter().map(Some).collect();
     Ok(program
         .outputs
         .iter()
@@ -330,11 +376,13 @@ pub fn profile_ops(
     sizes: &std::collections::BTreeMap<truthmill::DomainId, u64>,
 ) -> Result<Vec<OpProfile>> {
     let plans = prepare(program, blocks)?;
-    // One full pass to warm caches and fill `values`.
-    let mut values: Vec<Tensor> = Vec::with_capacity(program.values.len());
+    // One full pass to warm caches and fill `values`. Profile keeps all
+    // values alive (ops are re-timed individually); it is not the
+    // memory-critical path.
+    let mut values: Vec<Option<Tensor>> = Vec::with_capacity(program.values.len());
     for (definition, plan) in program.values.iter().zip(&plans) {
         let value = exec_one(definition, plan, blocks, &values, backend)?;
-        values.push(value);
+        values.push(Some(value));
     }
     let mut profiles = Vec::new();
     for (n, (definition, plan)) in program.values.iter().zip(&plans).enumerate() {
@@ -382,7 +430,7 @@ fn exec_one(
     definition: &ValueDef,
     plan: &OpPlan,
     blocks: &TensorBlocks,
-    values: &[Tensor],
+    values: &[Option<Tensor>],
     backend: &mut CpuBackend,
 ) -> Result<Tensor> {
     match (definition, plan) {
@@ -421,5 +469,87 @@ fn exec_one(
             Ok(acc.expect("LinComb with no args"))
         }
         _ => anyhow::bail!("plan/program mismatch"),
+    }
+}
+
+/// Static peak-memory estimate in bytes: inputs + worst-case live SSA values
+/// (liveness-aware), plus per-op output allocation headroom.
+/// For n-ary einsums the backend may build internal intermediates we cannot
+/// see; `risky_ops` counts einsums whose union-index product exceeds
+/// `risk_bytes` (those can explode; greedy-split or shrink sizes first).
+pub struct MemEstimate {
+    pub input_bytes: usize,
+    pub peak_live_bytes: usize,
+    pub risky_ops: Vec<usize>,
+}
+
+pub fn estimate_memory(
+    program: &Program,
+    blocks: &TensorBlocks,
+    sizes: &std::collections::BTreeMap<truthmill::DomainId, u64>,
+    risk_bytes: usize,
+) -> MemEstimate {
+    let input_bytes: usize = blocks
+        .values()
+        .map(|(t, _)| t.shape().iter().product::<usize>() * 8)
+        .sum();
+    let value_bytes: Vec<usize> = program
+        .values
+        .iter()
+        .map(|def| {
+            let code = match def {
+                ValueDef::Einsum(op) => &op.code,
+                ValueDef::LinComb(op) => &op.code,
+            };
+            code.output
+                .iter()
+                .map(|l| sizes[&code.domains[l]] as usize)
+                .product::<usize>()
+                * 8
+        })
+        .collect();
+    // Liveness-aware peak: simulate, tracking live bytes + new allocation.
+    let last = last_use(program);
+    let mut live: Vec<bool> = vec![false; program.values.len()];
+    let mut peak = input_bytes;
+    let mut current = input_bytes;
+    for (n, _) in program.values.iter().enumerate() {
+        current += value_bytes[n];
+        live[n] = true;
+        for (v, flag) in live.iter_mut().enumerate() {
+            if *flag && last[v] <= n {
+                current -= value_bytes[v];
+                *flag = false;
+            }
+        }
+        peak = peak.max(current);
+    }
+    let mut risky_ops = Vec::new();
+    for (n, definition) in program.values.iter().enumerate() {
+        if let ValueDef::Einsum(op) = definition {
+            if op.args.len() > 2 {
+                let mut labels: Vec<u32> = op.code.output.iter().map(|l| l.0).collect();
+                for input in &op.code.inputs {
+                    for l in input {
+                        if !labels.contains(&l.0) {
+                            labels.push(l.0);
+                        }
+                    }
+                }
+                let union_bytes: usize = labels
+                    .iter()
+                    .map(|l| sizes[&op.code.domains[&truthmill::IndexId(*l)]])
+                    .product::<u64>() as usize
+                    * 8;
+                if union_bytes > risk_bytes {
+                    risky_ops.push(n);
+                }
+            }
+        }
+    }
+    MemEstimate {
+        input_bytes,
+        peak_live_bytes: peak,
+        risky_ops,
     }
 }

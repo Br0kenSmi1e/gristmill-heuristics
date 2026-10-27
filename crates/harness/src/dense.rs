@@ -187,3 +187,13 @@ pub fn generate_inputs(problem: &Problem, seed: u64) -> Blocks {
     }
     blocks
 }
+
+/// Total input-block bytes implied by the problem's access patterns,
+/// BEFORE generating anything (early memory guard).
+pub fn estimate_input_bytes(problem: &Problem) -> usize {
+    collect_patterns(problem)
+        .values()
+        .flat_map(|pats| pats.iter())
+        .map(|pat| pat.iter().map(|d| problem.sizes[d] as usize).product::<usize>() * 8)
+        .sum()
+}
