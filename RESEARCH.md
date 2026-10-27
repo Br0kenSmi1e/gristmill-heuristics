@@ -104,9 +104,34 @@ Key decisions (agreed with user):
 - Harness under construction: load Problem → instantiate inputs (per-block,
   within-block symmetry projection) → interpret reference via tenferro →
   oracle check → steady-state timing.
+## Milestone 2 results (layout v2 = uniform cost model over storage entities)
 
-## Next investment
+Blocks and intermediates are uniform "storage entities"; each picks the
+layout minimizing sum over uses of weight * (1 if ideal else penalty).
+Machinery: liveness-based freeing, static memory guards + RLIMIT backstop,
+factmem transform (split only >256MB-union n-ary einsums).
 
-Milestone 1: harness `check` + `time` on mp3/ccd/ccsd; naive baseline numbers;
-CCSD profiling experiment (factorization/layout/order variants) to rank H1–H4.
-That ranking decides which heuristic surface the HL loop attacks first.
+Measured ((16,64) unless noted, best-of-N medians):
+- Train: ccd 1.39x t1 / 3.1x t16; ccsd 1.38x t1 / 2.8x t16; mp3 ~1.0x.
+- Held-out (penalty=2.7 fixed): adc2 1.44x t1 / 1.10x t16; ccsd_lambda
+  1.00x / 1.18x; ccsd_t (8,32) 1.06x / 1.11x; eom_ccsd 1.03x / **0.84x t16
+  REGRESSION**.
+- Negative results that shaped the design: (a) full greedy n-ary splitting
+  REGRESSES CCSD to 0.53x (backend plans small n-ary ops better; split only
+  for memory); (b) per-use argmax layout (v0) regresses CCSD 1.45x;
+  (c) consumer-blind intermediate reordering doubles LinComb traffic.
+- Memory is a feasibility constraint, not just performance (H3 confirmed):
+  naive EOM-CCSD needs >1GB backend-internal temporaries for 121 ops at
+  (16,64); CCSD(T) D3 input alone is 8.6GB at (16,64) -> ran at (8,32).
+- Thread-count changes the cost landscape: v2 wins shrink or invert at t16
+  (memory-bound); penalty must be thread-conditioned.
+
+## Next investment: the HL loop proper
+
+Policy parameters to learn from train feedback (trials/ as memory):
+thread-conditioned mismatch penalty; weight exponent; candidate-layout
+inventory (beyond per-use ideals); LinComb fusion decisions. First
+diagnose the eom_ccsd t16 regression mechanistically (profile), then edit
+the policy, re-measure train, and only then re-check held-out transfer.
+Open H1-prime question: cross-term shared intermediates (untested; needs a
+CSE transform).
