@@ -145,6 +145,29 @@ Measured ((16,64) unless noted, best-of-N medians):
    1.06x t16. Residual failure: eom_ccsd t16 (small-op layout sensitivity at
    high thread count; constant-penalty model inadequate there).
 
+## External comparison (gristmill, same backend, verified candidates)
+
+drudge-derived, gristmill-optimized CCD and CCSD schedules imported as
+truthmill candidate Programs (tools/export_gristmill_*.py); both pass
+truthmill::verify exactly and the numerical oracle. Interleaved timing at
+(16,64), ms, t1/t16:
+
+- CCD: naive 925/195; ours (CSE+layout) 601/169; gristmill 681/154;
+  gristmill+layout 395/121.
+- CCSD: naive 1903/619; ours 1528/589; gristmill 995/327; gristmill+layout
+  659/266.
+
+Reading: factorization and layout are complementary levers; composition wins
+everywhere. Our layout policy adds 1.2-1.7x on top of gristmill's FLOP-optimal
+schedules; on CCD ours alone beats gristmill alone at t1 despite 1.7x more
+FLOPs. CCSD exposes our missing piece: cross-term shared intermediates
+(gristmill executes ~5x fewer FLOPs than our per-op greedy there).
+
+Also fixed en route: oracle input generation now enforces cross-block symmetry
+relations (one projected representative per symmetry component) -- the
+gristmill candidate exposed that realism bug by failing the oracle despite
+passing verify.
+
 ## Next investment
 
 Measured per-op cost model (profile expensive ops under layout variants; fit
