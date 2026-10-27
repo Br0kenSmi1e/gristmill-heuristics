@@ -1,0 +1,7 @@
+{
+  "defaultProvider": "kimi-coding",
+  "defaultModel": "k3",
+  "defaultThinkingLevel": "high",
+  "defaultTools": ["read", "bash", "edit", "write"],
+  "packages": ["npm:pi-web-access"]
+}

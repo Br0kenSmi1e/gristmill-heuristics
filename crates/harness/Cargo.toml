@@ -1,0 +1,16 @@
+[package]
+name = "harness"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+truthmill = { git = "https://github.com/Br0kenSmi1e/truthmill" }
+tenferro-runtime = "0.7.1"
+tenferro-tensor = "0.7.1"
+tenferro-cpu = "0.7.1"
+tenferro-einsum = "0.7.1"
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+serde_json = "1"
+rand = "0.9"
+rand_chacha = "0.9"
