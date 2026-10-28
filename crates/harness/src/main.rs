@@ -1,6 +1,7 @@
 //! Harness: correctness oracle and steady-state timing for truthmill problems
 //! executed on tenferro.
 
+mod bridge;
 mod costmodel;
 mod dense;
 mod interp;
@@ -135,6 +136,22 @@ enum Cmd {
         transform: String,
         #[arg(long, default_value = "none")]
         layout: String,
+    },
+    /// HL selector: greedy rewrite search over gristmill-rewrites kernel,
+    /// scored by the analytic wall-time model (layout-in-the-loop).
+    Select {
+        problem: PathBuf,
+        #[arg(long)]
+        sizes: Option<String>,
+        #[arg(long, default_value = "1")]
+        threads: usize,
+        #[arg(long, default_value = "40")]
+        max_steps: usize,
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Minimum relative improvement to accept a step.
+        #[arg(long, default_value = "0.005")]
+        accept: f64,
     },
     /// Per-op timing profile of one program execution (prepared plans).
     Profile {
@@ -549,6 +566,226 @@ fn main() -> Result<()> {
             let sum_p: f64 = rows.iter().map(|r| r.0).sum();
             let sum_m: f64 = rows.iter().map(|r| r.1).sum();
             println!("total measured {sum_m:.1} ms, predicted {sum_p:.1} ms");
+        }
+        Cmd::Select {
+            problem,
+            sizes,
+            threads,
+            max_steps,
+            out,
+            accept,
+        } => {
+            let name = stem(&problem);
+            let problem = load_problem(&problem, &sizes)?;
+            let input_ids: Vec<u32> = dense::collect_patterns(&problem)
+                .keys()
+                .map(|t| t.0)
+                .collect();
+            let (computation, outputs) = bridge::problem_to_computation(&problem, 1000);
+            let output_ids: Vec<u32> = outputs.iter().map(|t| t.0).collect();
+            let rates = costmodel::rates_for_threads(threads);
+
+            let score = |comp: &gristmill_rewrites::repr::Computation| -> f64 {
+                let prog =
+                    bridge::computation_to_program(comp, &input_ids, &output_ids);
+                let (bl, vl) = layout3::plan_layouts_model(&problem, &prog, &rates, 1);
+                let prog = layout::apply_layouts_to_program_v2(&prog, &vl);
+                costmodel::program_costs(&prog, &problem.sizes, &bl, &rates)
+                    .iter()
+                    .sum()
+            };
+
+            use gristmill_rewrites::action::{self, ActionQuery, ActionSpace};
+            use gristmill_rewrites::state::State;
+            use gristmill_rewrites::transition;
+
+            let mut state = State::new(computation, outputs.clone())
+                .map_err(|e| anyhow::anyhow!("state: {e:?}"))?;
+            let mut cur = score(state.computation());
+            eprintln!("[select] initial predicted {cur:.4} s");
+            let mut trace = Vec::new();
+            for step in 0..max_steps {
+                let dbg = std::env::var("H_DEBUG").is_ok();
+                let step_start = std::time::Instant::now();
+                let mut best: Option<(f64, action::Action, String)> = None;
+                let ndefs = state.computation().definitions.len();
+                let biclique_max_terms: usize = std::env::var("H_BICLIQUE_MAX_TERMS")
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(20);
+                for d in 0..ndefs {
+                    let dstart = std::time::Instant::now();
+                    let nterms_d = state.computation().definitions[d].rhs.len();
+                    if nterms_d > biclique_max_terms {
+                        // Kernel enumerates ALL maximal bicliques (exponential,
+                        // no cutoff): skip large definitions until the kernel
+                        // grows an enumeration budget.
+                        continue;
+                    }
+                    if dbg {
+                        eprintln!("[dbg] def{d}: {nterms_d} terms, query start");
+                    }
+                    // biclique, with tiered prefilter: rank candidates by the
+                    // kernel's symbolic log_flops, model-price only top-k.
+                    if let Ok(ActionSpace::Biclique(space)) =
+                        action::query(&state, ActionQuery::BicliqueFactor(action::DefinitionPosition(d)))
+                    {
+                        let log_sizes: std::collections::BTreeMap<
+                            gristmill_rewrites::repr::RangeId,
+                            f64,
+                        > = problem
+                            .sizes
+                            .iter()
+                            .map(|(dom, s)| {
+                                (gristmill_rewrites::repr::RangeId(dom.0), (*s as f64).ln())
+                            })
+                            .collect();
+                        let base_flops = gristmill_rewrites::cost::log_flops(
+                            state.computation(),
+                            &log_sizes,
+                        )
+                        .unwrap_or(f64::INFINITY);
+                        let mut priced: Vec<(f64, usize, action::Action)> = Vec::new();
+                        for ci in 0..space.candidate_count() {
+                            if let Some((nl, nr)) = space.shape(ci) {
+                                let left = vec![true; nl];
+                                let right = vec![true; nr];
+                                if let Ok(act) = space.select(ci, &left, &right) {
+                                    if let Ok(s2) = transition::apply(&state, act.clone()) {
+                                        let f2 = gristmill_rewrites::cost::log_flops(
+                                            s2.computation(),
+                                            &log_sizes,
+                                        )
+                                        .unwrap_or(f64::INFINITY);
+                                        priced.push((f2 - base_flops, ci, act));
+                                    }
+                                }
+                            }
+                        }
+                        priced.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+                        for (_, ci, act) in priced.into_iter().take(8) {
+                            if let Ok(s2) = transition::apply(&state, act.clone()) {
+                                let c = score(s2.computation());
+                                let better = match &best {
+                                    None => true,
+                                    Some((b, _, _)) => c < *b,
+                                };
+                                if better {
+                                    best = Some((c, act, format!("biclique def{d} cand{ci}")));
+                                }
+                            }
+                        }
+                    }
+                    if dbg {
+                        eprintln!("[dbg] def{d} biclique phase: {:?}", dstart.elapsed());
+                    }
+                    // permutation
+                    if let Ok(ActionSpace::Permutation(space)) =
+                        action::query(&state, ActionQuery::PermutationFactor(action::DefinitionPosition(d)))
+                    {
+                        let snaps = space.snapshot();
+                        for ci in 0..snaps.len() {
+                            let (_, roots, uses) = &snaps[ci];
+                            let rmask = vec![true; roots.len()];
+                            let umask = vec![true; uses.len()];
+                            if let Ok(act) = space.select(ci, &rmask, &umask) {
+                                if let Ok(s2) = transition::apply(&state, act.clone()) {
+                                    let c = score(s2.computation());
+                                    let better = match &best {
+                                        None => true,
+                                        Some((b, _, _)) => c < *b,
+                                    };
+                                    if better {
+                                        best = Some((c, act, format!("permute def{d} cand{ci}")));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if dbg {
+                        eprintln!("[dbg] def{d} permutation phase: {:?}", dstart.elapsed());
+                    }
+                    // parenthesize: balanced splits of multi-factor terms
+                    let nterms = state.computation().definitions[d].rhs.len();
+                    for tpos in 0..nterms {
+                        let nf = state.computation().definitions[d].rhs[tpos].factors.len();
+                        if nf < 3 {
+                            continue;
+                        }
+                        if let Ok(ActionSpace::Parenthesize(space)) =
+                            action::query(&state, ActionQuery::Parenthesize(action::TermPosition {
+                                definition: action::DefinitionPosition(d),
+                                term: tpos,
+                            }))
+                        {
+                            for cut in 1..nf {
+                                let mask: Vec<bool> =
+                                    (0..nf).map(|i| i < cut).collect();
+                                if let Ok(act) = space.select(&mask) {
+                                    if let Ok(s2) = transition::apply(&state, act.clone()) {
+                                        let c = score(s2.computation());
+                                        let better = match &best {
+                                            None => true,
+                                            Some((b, _, _)) => c < *b,
+                                        };
+                                        if better {
+                                            best = Some((
+                                                c,
+                                                act,
+                                                format!("paren def{d} term{tpos} cut{cut}"),
+                                            ));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if dbg {
+                    eprintln!("[dbg] step {step} total: {:?}", step_start.elapsed());
+                }
+                match best {
+                    Some((c, act, desc)) if c < cur * (1.0 - accept) => {
+                        eprintln!("[select] step {step}: {desc}  {cur:.4} -> {c:.4} s");
+                        trace.push(serde_json::json!({
+                            "step": step, "action": desc,
+                            "before_s": cur, "after_s": c,
+                        }));
+                        state = transition::apply(&state, act)
+                            .map_err(|e| anyhow::anyhow!("apply: {e:?}"))?;
+                        cur = c;
+                    }
+                    _ => {
+                        eprintln!("[select] converged at step {step}, predicted {cur:.4} s");
+                        break;
+                    }
+                }
+            }
+            // Final: convert, verify exactly, optionally save.
+            let prog = bridge::computation_to_program(
+                state.computation(),
+                &input_ids,
+                &output_ids,
+            );
+            let ok = truthmill::verify(&problem, &prog)
+                .map_err(|e| anyhow::anyhow!("verify error: {e:?}"))?;
+            eprintln!("[select] truthmill::verify(final): {ok}");
+            if !ok {
+                anyhow::bail!("final program failed exact verification");
+            }
+            if let Some(path) = &out {
+                std::fs::write(path, serde_json::to_string(&prog)?)?;
+                eprintln!("[select] wrote {}", path.display());
+            }
+            let record = serde_json::json!({
+                "kind": "select",
+                "problem": name,
+                "sizes": sizes_map(&problem),
+                "threads": threads,
+                "predicted_s": cur,
+                "trace": trace,
+            });
+            println!("{}", serde_json::to_string(&record)?);
         }
         Cmd::Profile {
             problem,

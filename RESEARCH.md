@@ -254,4 +254,29 @@ The share_pairs + measured-acceptance search machinery survives; its numbers
 need re-measurement. The analytic model now allows MODEL-priced acceptance,
 which makes the search inner loop microseconds instead of wall-clock runs.
 
+## HL selector on gristmill-rewrites kernel (the converged path)
+
+Architecture: truthmill Problem -> bridge (SSA expansion to sum-of-products)
+-> gristmill-rewrites State -> greedy selector over kernel rewrite spaces
+(biclique / parenthesize / permutation), tiered scoring (kernel log_flops
+prefilter top-8 -> our analytic wall-time model WITH layout-in-the-loop) ->
+verify-gated -> candidate Program JSON -> tenferro execution. Search cost:
+~30 s for CCSD (16 steps, all biclique firings incl. chained intermediates).
+
+Results (clean machine, (16,64) unless noted, best-of-N, t1/t16 ms):
+- vs naive backend planner: ccd 2.03x/1.87x; ccsd 2.62x/3.03x; ccsd_lambda
+  2.33x/2.64x; eom_ccsd 5.78x/4.38x; adc2 2.08x/1.59x.
+- vs gristmill-FLOP-optimized + our layout (previous best): ccd 449/139 ->
+  434/119; ccsd 1043/363 -> 736/263 (1.42x/1.38x BETTER). The wall-time-priced
+  selector beats FLOP-greedy selection on the same rewrite space.
+- All selected candidates pass truthmill::verify AND the numerical oracle.
+- Limitation: ccsd_t stalls - the kernel enumerates ALL maximal bicliques
+  with no budget (24-term def -> explosion). Needs a kernel enumeration
+  cutoff (gristmill's greedy_cutoff analogue); selector currently skips
+  defs with >20 terms.
+
+Design validation: the "selector replaces FLOP-greedy selection, kernel owns
+generation" hypothesis is CONFIRMED. Tiered scoring (symbolic prefilter ->
+wall-time model) mirrors the HL feedback tiers inside the selector itself.
+
 ## Superseded earlier notes (kept for audit)

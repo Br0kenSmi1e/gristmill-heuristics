@@ -557,6 +557,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "gristmill-rewrites"
+version = "0.1.0"
+source = "git+https://github.com/Br0kenSmi1e/gristmill-rewrites#7f2bbd007dd59969a2839f5ca1629340a0c5cf0b"
+dependencies = [
+ "num-rational",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "half"
 version = "2.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -575,7 +585,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "gristmill-rewrites",
  "libc",
+ "num-rational",
  "rand",
  "rand_chacha",
  "serde_json",

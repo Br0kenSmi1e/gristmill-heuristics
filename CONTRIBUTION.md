@@ -73,6 +73,22 @@ failure-driven policy edits documented in RESEARCH.md.
 
 ## Strongest objection
 
+The selector is greedy over the kernel's spaces with our scoring; gristmill's
+full pipeline includes phases we don't exercise (its own summation
+optimization details), so "we beat gristmill" means "our wall-time-selected
+rewrite sequence beat gristmill's FLOP-selected output on these problems at
+these sizes on this backend" - not a claim about gristmill on its native
+Fortran toolchain. ccsd_t is unimproved (kernel biclique enumeration has no
+budget - 24-term definitions explode; needs a cutoff). Single machine, sizes
+capped by 14 GB RAM; the model's four rates are calibrated once per thread
+count and could drift across shapes. adc2's gains are partly CSE/layout
+(factorization found little there - 1 step).
+
+(Previous objections, still standing:) Single machine, small sizes (o<=16,
+v<=64); layout optimization with analytic models is not new (TCE lineage);
+residual novelty is backend-behavior modeling + verify-gated search +
+transfer evaluation + the HL maintenance loop.
+
 The wins are modest and single-machine, at small sizes (o≤16, v≤64) dictated
 by 14 GB RAM; at production sizes GEMM may dominate enough to shrink layout
 effects (or permutes may hurt more — untested). The baseline, though real, is
