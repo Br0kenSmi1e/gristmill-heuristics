@@ -178,5 +178,80 @@ all, since candidates evaluate in microseconds and extrapolate to unrunnable
 sizes). Target: close the CCSD gap (gristmill executes ~5x fewer FLOPs via
 shared intermediates) without importing gristmill. Then blockwise symmetry.
 
-## Superseded earlier notes (kept for audit)
+## HL loop iterations completed (see trials/ for raw data)
 
+1. v0 per-use argmax layout -> CCSD 1.45x regression; diagnosed: multi-use
+   starvation.
+2. v1/v2 uniform entity cost model (blocks + intermediates, consumer-aware):
+   fixed v0 failure; exposed that full greedy splitting itself regresses CCSD
+   (0.53x) because the backend plans n-ary einsums well -> split only for
+   memory (factmem).
+3. Liveness freeing: fixed OOM, also large speed win (naive ccsd t16
+   1689 -> 743 ms).
+4. Penalty sweep on train: flat 2.7 fine; thread-conditioned penalties NOT
+   supported by data (within noise). Weak-signal learning; noted.
+5. cse_exact (exact-duplicate sharing; references contain up to 4x duplicate
+   contractions): small consistent win (ccsd t16 659 -> 627 ms).
+6. Final policy: {transform: cse-only / factmem-when-needed, layout v2,
+   penalty 2.7}. Held-out: adc2 1.42x/1.15x, ccsd_lambda 1.03x/1.11x,
+   ccsd_t 1.06x/1.10x, eom_ccsd 1.04x/0.89x (t1/t16). Geomean 1.13x t1,
+   1.06x t16. Residual failure: eom_ccsd t16 (small-op layout sensitivity at
+   high thread count; constant-penalty model inadequate there).
+
+## External comparison (gristmill, same backend, verified candidates)
+
+drudge-derived, gristmill-optimized CCD and CCSD schedules imported as
+truthmill candidate Programs (tools/export_gristmill_*.py); both pass
+truthmill::verify exactly and the numerical oracle. Interleaved timing at
+(16,64), ms, t1/t16:
+
+- CCD: naive 925/195; ours (CSE+layout) 601/169; gristmill 681/154;
+  gristmill+layout 395/121.
+- CCSD: naive 1903/619; ours 1528/589; gristmill 995/327; gristmill+layout
+  659/266.
+
+Reading: factorization and layout are complementary levers; composition wins
+everywhere. Our layout policy adds 1.2-1.7x on top of gristmill's FLOP-optimal
+schedules; on CCD ours alone beats gristmill alone at t1 despite 1.7x more
+FLOPs. CCSD exposes our missing piece: cross-term shared intermediates
+(gristmill executes ~5x fewer FLOPs than our per-op greedy there).
+
+Also fixed en route: oracle input generation now enforces cross-block symmetry
+relations (one projected representative per symmetry component) -- the
+gristmill candidate exposed that realism bug by failing the oracle despite
+passing verify.
+
+## HL search loop (M3): measured-acceptance factorization search
+
+New machinery: `share_pairs` (canonical pair signatures -> shared
+intermediates) and `harness search`: forward selection where each candidate
+intermediate is introduced only if MEASURED wall time improves (0.5%
+threshold), each step gated by truthmill::verify; artifacts saved as
+candidate Program JSONs.
+
+Preliminary (CCD/CCSD, (16,64)):
+- Blind FLOP-greedy sharing HURTS CCSD (2233 vs 1529 ms t1) -- same lesson as
+  greedy splitting: the model must not outrun the measurement.
+- Measured-acceptance search improves our policy: CCD 601 -> 508 ms t1,
+  CCSD 1529 -> 1269 ms t1 (both with layout v2 on top). Still behind
+  gristmill+layout (392 / 657): pair-sharing lacks (a) sum factorization
+  (A*B+A*C -> A*(B+C)), (b) multi-step lookahead, (c) chained intermediates
+  (pairs involving freshly-created intermediates).
+- LAYOUT-AWARE acceptance (evaluating candidates with layout planning
+  applied) showed an inconsistent baseline (reference+layout timed 3886 ms
+  in-loop vs 1384 via the time path) -- UNRESOLVED, possibly load-related;
+  investigate before trusting that variant.
+
+CONTAMINATION WARNING: from ~10:44 the box ran ~20 user julia jobs
+(load avg 24, swap touched). All timings after that point are unreliable
+in absolute value (interleaving keeps A/B fair-ish). Re-run key comparisons
+when the machine is free: share2/share3 need confirmation.
+
+
+NOTE (reconciliation, clean machine): the M3/share* timings above were
+contaminated by concurrent load and are SUPERSEDED by trials/clean_*.jsonl.
+The share_pairs + measured-acceptance search machinery survives; its numbers
+need re-measurement. The analytic model now allows MODEL-priced acceptance,
+which makes the search inner loop microseconds instead of wall-clock runs.
+
+## Superseded earlier notes (kept for audit)
