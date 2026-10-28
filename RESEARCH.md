@@ -86,6 +86,30 @@ Key decisions (agreed with user):
 
 ## Prior art (positioning)
 
+Analytic cost models for tensor contraction scheduling (the approach adopted
+for the next optimizer iteration):
+- TCE lineage: Gao et al. PPoPP'05 (out-of-core perf model); JPDC 2012 /
+  LCPC'04 "empirical performance model-driven data layout optimization and
+  library call selection for tensor contraction expressions" (closest prior
+  art: analytic layout-selection model, empirically calibrated); Pitzer et
+  al. JPCA'09 (algebraic/CSE flop minimization); Space-Time Trade-Off TR.
+- TCCG (Springer/Bientinesi TOMS'18): per-contraction model choosing
+  TTGT/GETT/LoG; transpose cost as data movement.
+- COGENT (Kim et al. CGO'19): analytic DRAM-transaction model ranking kernel
+  configs; beats hours-long autotuning (Tensor Comprehensions) on CCSD(T)
+  contractions - direct evidence that analytic ranking suffices in-domain.
+- Roofline (Williams'09); CTF/Solomonik communication models (parallel).
+
+What they do not cover (our residual novelty): (1) they model hardware
+directly; we must model a self-planning BACKEND (tenferro re-plans
+internally) - the model's terms describe the backend's lowering behavior;
+(2) none gate candidate schedules with exact symbolic equivalence;
+(3) whole-equation-set SSA scheduling with iterative-regime layout hoisting
+and protected transfer evaluation across methods. JPDC 2012 means "first
+analytic layout model" is NOT claimable.
+
+Earlier positioning notes:
+
 - gristmill/drudge: FLOP-driven factorization + codegen; fixed heuristics.
 - TCE (NWChem), TCCG/GETT (Springer/Bientinesi): transpose cost is real; fixed
   compilers.
