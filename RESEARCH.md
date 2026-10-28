@@ -168,6 +168,32 @@ relations (one projected representative per symmetry component) -- the
 gristmill candidate exposed that realism bug by failing the oracle despite
 passing verify.
 
+## HL search loop (M3): measured-acceptance factorization search
+
+New machinery: `share_pairs` (canonical pair signatures -> shared
+intermediates) and `harness search`: forward selection where each candidate
+intermediate is introduced only if MEASURED wall time improves (0.5%
+threshold), each step gated by truthmill::verify; artifacts saved as
+candidate Program JSONs.
+
+Preliminary (CCD/CCSD, (16,64)):
+- Blind FLOP-greedy sharing HURTS CCSD (2233 vs 1529 ms t1) -- same lesson as
+  greedy splitting: the model must not outrun the measurement.
+- Measured-acceptance search improves our policy: CCD 601 -> 508 ms t1,
+  CCSD 1529 -> 1269 ms t1 (both with layout v2 on top). Still behind
+  gristmill+layout (392 / 657): pair-sharing lacks (a) sum factorization
+  (A*B+A*C -> A*(B+C)), (b) multi-step lookahead, (c) chained intermediates
+  (pairs involving freshly-created intermediates).
+- LAYOUT-AWARE acceptance (evaluating candidates with layout planning
+  applied) showed an inconsistent baseline (reference+layout timed 3886 ms
+  in-loop vs 1384 via the time path) -- UNRESOLVED, possibly load-related;
+  investigate before trusting that variant.
+
+CONTAMINATION WARNING: from ~10:44 the box ran ~20 user julia jobs
+(load avg 24, swap touched). All timings after that point are unreliable
+in absolute value (interleaving keeps A/B fair-ish). Re-run key comparisons
+when the machine is free: share2/share3 need confirmation.
+
 ## Next investment
 
 Measured per-op cost model (profile expensive ops under layout variants; fit
