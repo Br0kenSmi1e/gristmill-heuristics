@@ -385,3 +385,355 @@ pub fn cse_exact(program: &Program) -> Program {
             .collect(),
     }
 }
+
+/// Shared-pair intermediate discovery (cross-term factorization).
+///
+/// Finds pairs of arguments (A, B) in einsum ops whose pairwise contraction
+/// recurs across ops (canonical up to label renaming), then introduces one
+/// intermediate I = A . B and rewrites every occurrence to consume it.
+/// Greedy: each round forms the group with the largest estimated saving
+/// (count-1) * formation_flops; intermediates larger than
+/// `max_intermediate_bytes` are skipped (memory guard). Verified downstream
+/// by truthmill::verify + oracle.
+
+use std::collections::HashMap;
+
+#[derive(Clone)]
+pub struct Occurrence {
+    pub op: usize,
+    pub arg_i: usize,
+    pub arg_j: usize,
+    /// canonical label id -> local IndexId in this op's code
+    pub local_of_canon: BTreeMap<u32, IndexId>,
+    /// free canonical ids in intermediate axis order (arg_i's free axes, then
+    /// arg_j's new free axes)
+    pub inter_order: Vec<u32>,
+    pub formation_flops: f64,
+}
+
+fn canon_of(occ: &Occurrence, local: &IndexId) -> u32 {
+    occ.local_of_canon
+        .iter()
+        .find(|(_, l)| *l == local)
+        .map(|(c, _)| *c)
+        .expect("label in canon map")
+}
+
+pub fn pair_occurrences(
+    program: &Program,
+    sizes: &BTreeMap<DomainId, u64>,
+) -> HashMap<Vec<u8>, Vec<Occurrence>> {
+    let mut groups: HashMap<Vec<u8>, Vec<Occurrence>> = HashMap::new();
+    for (n, definition) in program.values.iter().enumerate() {
+        let op = match definition {
+            ValueDef::Einsum(op) => op,
+            _ => continue,
+        };
+        let k = op.args.len();
+        if k < 2 {
+            continue;
+        }
+        for i in 0..k {
+            for j in (i + 1)..k {
+                let li = &op.code.inputs[i];
+                let lj = &op.code.inputs[j];
+                let contracted: Vec<IndexId> =
+                    li.iter().filter(|l| lj.contains(l)).cloned().collect();
+                if contracted.is_empty() {
+                    continue;
+                }
+                let mut needed: Vec<IndexId> = op.code.output.clone();
+                for (m, labels) in op.code.inputs.iter().enumerate() {
+                    if m != i && m != j {
+                        for l in labels {
+                            if !needed.contains(l) {
+                                needed.push(*l);
+                            }
+                        }
+                    }
+                }
+                let pair_labels: Vec<IndexId> =
+                    li.iter().chain(lj.iter()).cloned().collect();
+                let free: Vec<IndexId> = pair_labels
+                    .iter()
+                    .filter(|l| needed.contains(l))
+                    .cloned()
+                    .collect();
+                // Deterministic arg order by (ref, per-axis signature).
+                let arg_key = |idx: usize| -> Vec<u8> {
+                    let mut b = Vec::new();
+                    match &op.args[idx] {
+                        ValueRef::Tensor(t) => {
+                            b.push(0xFF);
+                            b.extend_from_slice(&t.0.to_le_bytes());
+                        }
+                        ValueRef::Value(v) => {
+                            b.push(0xFE);
+                            b.extend_from_slice(&v.0.to_le_bytes());
+                        }
+                    }
+                    for l in &op.code.inputs[idx] {
+                        b.extend_from_slice(&op.code.domains[l].0.to_le_bytes());
+                        b.push(contracted.contains(l) as u8);
+                        b.push(free.contains(l) as u8);
+                    }
+                    b
+                };
+                let (i, j) = if arg_key(i) <= arg_key(j) { (i, j) } else { (j, i) };
+                let li = &op.code.inputs[i];
+                let lj = &op.code.inputs[j];
+                let mut canon: BTreeMap<u32, u32> = BTreeMap::new();
+                let mut next = 0u32;
+                let mut local_of_canon: BTreeMap<u32, IndexId> = BTreeMap::new();
+                let mut sig = Vec::new();
+                let mut inter_order: Vec<u32> = Vec::new();
+                for labels in [li, lj] {
+                    for l in labels {
+                        let c = *canon.entry(l.0).or_insert_with(|| {
+                            let v = next;
+                            next += 1;
+                            v
+                        });
+                        local_of_canon.insert(c, *l);
+                        sig.extend_from_slice(&c.to_le_bytes());
+                        sig.extend_from_slice(&op.code.domains[l].0.to_le_bytes());
+                        sig.push(contracted.contains(l) as u8);
+                        sig.push(free.contains(l) as u8);
+                        if free.contains(l) {
+                            inter_order.push(c);
+                        }
+                    }
+                    sig.push(0xFD);
+                }
+                for idx in [i, j] {
+                    match &op.args[idx] {
+                        ValueRef::Tensor(t) => {
+                            sig.push(0xFF);
+                            sig.extend_from_slice(&t.0.to_le_bytes());
+                        }
+                        ValueRef::Value(v) => {
+                            sig.push(0xFE);
+                            sig.extend_from_slice(&v.0.to_le_bytes());
+                        }
+                    }
+                }
+                let union: Vec<IndexId> = {
+                    let mut u = li.clone();
+                    for l in lj {
+                        if !u.contains(l) {
+                            u.push(*l);
+                        }
+                    }
+                    u
+                };
+                let formation: f64 = union
+                    .iter()
+                    .map(|l| sizes[&op.code.domains[l]] as f64)
+                    .product();
+                groups.entry(sig).or_default().push(Occurrence {
+                    op: n,
+                    arg_i: i,
+                    arg_j: j,
+                    local_of_canon,
+                    inter_order,
+                    formation_flops: formation,
+                });
+            }
+        }
+    }
+    groups
+}
+
+/// One round: introduce the single most valuable shared intermediate.
+fn share_one_round_auto(
+    program: &Program,
+    sizes: &BTreeMap<DomainId, u64>,
+    max_intermediate_bytes: usize,
+) -> Option<Program> {
+    let groups = pair_occurrences(program, sizes);
+    let mut best: Option<(f64, &Vec<Occurrence>)> = None;
+    for occs in groups.values() {
+        if occs.len() < 2 {
+            continue;
+        }
+        let first = &occs[0];
+        let op = match &program.values[first.op] {
+            ValueDef::Einsum(op) => op,
+            _ => unreachable!(),
+        };
+        let inter_elems: usize = first
+            .inter_order
+            .iter()
+            .map(|c| sizes[&op.code.domains[&first.local_of_canon[c]]] as usize)
+            .product();
+        if inter_elems * 8 > max_intermediate_bytes {
+            continue;
+        }
+        let saving = (occs.len() - 1) as f64 * first.formation_flops;
+        if best.as_ref().map(|(s, _)| saving > *s).unwrap_or(true) {
+            best = Some((saving, occs));
+        }
+    }
+    let (_, occs) = best?;
+    Some(share_introduce(program, occs))
+}
+
+/// Introduce the shared intermediate for a specific occurrence group.
+pub fn share_introduce(program: &Program, occs: &[Occurrence]) -> Program {
+    let leader_pos = occs.iter().map(|o| o.op).min().unwrap();
+    let leader = occs.iter().find(|o| o.op == leader_pos).unwrap().clone();
+    let leader_op = match &program.values[leader_pos] {
+        ValueDef::Einsum(op) => op,
+        _ => unreachable!(),
+    };
+
+    // Build the intermediate definition (local labels in canon order).
+    let mut domains: BTreeMap<IndexId, DomainId> = BTreeMap::new();
+    let mut next_local = 0u32;
+    let mut canon_to_local: BTreeMap<u32, IndexId> = BTreeMap::new();
+    let mut localize = |canon_id: u32, domain: DomainId| {
+        *canon_to_local.entry(canon_id).or_insert_with(|| {
+            let id = IndexId(next_local);
+            next_local += 1;
+            domains.insert(id, domain);
+            id
+        })
+    };
+    let canon_of_local = |l: &IndexId| -> u32 {
+        leader
+            .local_of_canon
+            .iter()
+            .find(|(_, x)| *x == l)
+            .map(|(c, _)| *c)
+            .expect("leader canon")
+    };
+    let in_a: Vec<IndexId> = leader_op.code.inputs[leader.arg_i]
+        .iter()
+        .map(|l| {
+            let c = canon_of_local(l);
+            localize(c, leader_op.code.domains[l])
+        })
+        .collect();
+    let in_b: Vec<IndexId> = leader_op.code.inputs[leader.arg_j]
+        .iter()
+        .map(|l| {
+            let c = canon_of_local(l);
+            localize(c, leader_op.code.domains[l])
+        })
+        .collect();
+    let inter_out: Vec<IndexId> = leader
+        .inter_order
+        .iter()
+        .map(|c| localize(*c, leader_op.code.domains[&leader.local_of_canon[c]]))
+        .collect();
+    let inter_def = ValueDef::Einsum(Einsum {
+        coeff: Coefficient::from_integer(1.into()),
+        code: Code {
+            inputs: vec![in_a, in_b],
+            output: inter_out,
+            domains,
+        },
+        args: vec![
+            leader_op.args[leader.arg_i],
+            leader_op.args[leader.arg_j],
+        ],
+    });
+
+    // Rewrite: insert inter_def before leader_pos; shift ids; rewrite occs.
+    let occ_ops: std::collections::BTreeSet<usize> = occs.iter().map(|o| o.op).collect();
+    let shift = |v: u32| -> u32 {
+        if v as usize >= leader_pos {
+            v + 1
+        } else {
+            v
+        }
+    };
+    let shift_ref = |r: &ValueRef| -> ValueRef {
+        match r {
+            ValueRef::Tensor(t) => ValueRef::Tensor(*t),
+            ValueRef::Value(v) => ValueRef::Value(truthmill::ValueId(shift(v.0))),
+        }
+    };
+    let mut values: Vec<ValueDef> = Vec::with_capacity(program.values.len() + 1);
+    for (n, definition) in program.values.iter().enumerate() {
+        if n == leader_pos {
+            values.push(inter_def.clone());
+        }
+        if occ_ops.contains(&n) {
+            let op = match definition {
+                ValueDef::Einsum(op) => op,
+                _ => unreachable!(),
+            };
+            let occ = occs.iter().find(|o| o.op == n).unwrap();
+            let (i, j) = (occ.arg_i, occ.arg_j);
+            let mut inputs: Vec<Vec<IndexId>> = Vec::new();
+            let mut args: Vec<ValueRef> = Vec::new();
+            for m in 0..op.args.len() {
+                if m == i || m == j {
+                    continue;
+                }
+                inputs.push(op.code.inputs[m].clone());
+                args.push(shift_ref(&op.args[m]));
+            }
+            let inter_labels: Vec<IndexId> = occ
+                .inter_order
+                .iter()
+                .map(|c| occ.local_of_canon[c])
+                .collect();
+            inputs.push(inter_labels);
+            args.push(ValueRef::Value(truthmill::ValueId(leader_pos as u32)));
+            // domains must cover exactly the used labels
+            let mut domains = BTreeMap::new();
+            for labels in inputs.iter().chain(std::iter::once(&op.code.output)) {
+                for l in labels {
+                    domains.insert(*l, op.code.domains[l]);
+                }
+            }
+            values.push(ValueDef::Einsum(Einsum {
+                coeff: op.coeff,
+                code: Code {
+                    inputs,
+                    output: op.code.output.clone(),
+                    domains,
+                },
+                args,
+            }));
+        } else {
+            let mut def = definition.clone();
+            match &mut def {
+                ValueDef::Einsum(op) => {
+                    op.args = op.args.iter().map(shift_ref).collect();
+                }
+                ValueDef::LinComb(op) => {
+                    op.args = op.args.iter().map(shift_ref).collect();
+                }
+            }
+            values.push(def);
+        }
+    }
+    Program {
+        values,
+        outputs: program
+            .outputs
+            .iter()
+            .map(|o| truthmill::ValueId(shift(o.0)))
+            .collect(),
+    }
+}
+
+/// Iterate shared-pair discovery until no profitable group remains.
+pub fn share_pairs(
+    program: &Program,
+    sizes: &BTreeMap<DomainId, u64>,
+    max_rounds: usize,
+    max_intermediate_bytes: usize,
+) -> Program {
+    let mut current = program.clone();
+    for _ in 0..max_rounds {
+        match share_one_round_auto(&current, sizes, max_intermediate_bytes) {
+            Some(next) => current = next,
+            None => break,
+        }
+    }
+    current
+}

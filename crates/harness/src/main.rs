@@ -88,6 +88,29 @@ enum Cmd {
         #[arg(long)]
         candidate: Option<PathBuf>,
     },
+    /// HL search: forward selection over shared-intermediate candidates with
+    /// MEASURED acceptance (small-size wall time), exact verify per step.
+    Search {
+        problem: PathBuf,
+        #[arg(long)]
+        sizes: Option<String>,
+        #[arg(long, default_value = "1")]
+        threads: usize,
+        #[arg(long, default_value = "0")]
+        seed: u64,
+        /// Max accepted intermediates.
+        #[arg(long, default_value = "30")]
+        budget: usize,
+        /// Candidates considered per round (by FLOP-saving order).
+        #[arg(long, default_value = "12")]
+        topk: usize,
+        /// Output path for the best program found (truthmill Program JSON).
+        #[arg(long)]
+        out: PathBuf,
+        /// Evaluate candidates with layout planning applied (slower, realistic).
+        #[arg(long)]
+        search_layout: bool,
+    },
     /// Print symbolic FLOP terms for reference and greedy-factored programs.
     Flops {
         problem: PathBuf,
@@ -322,6 +345,123 @@ fn main() -> Result<()> {
             });
             println!("{}", serde_json::to_string(&record)?);
         }
+        Cmd::Search {
+            problem,
+            sizes,
+            threads,
+            seed,
+            budget,
+            topk,
+            out,
+            search_layout,
+        } => {
+            let name = stem(&problem);
+            let problem = load_problem(&problem, &sizes)?;
+            let orig = dense::generate_inputs(&problem, seed);
+            let tensor_blocks = interp::to_tensor_blocks(&orig)?;
+            let mut backend = CpuBackend::with_threads(threads).map_err(anyhow::Error::msg)?;
+
+            let time_program = |prog: &truthmill::Program,
+                                blocks_in: &interp::TensorBlocks,
+                                backend: &mut CpuBackend|
+             -> Result<f64> {
+                // Optionally plan layouts on the candidate and permute blocks
+                // accordingly, so acceptance reflects layout-adjusted cost.
+                let (program_cow, blocks_owned);
+                let program: &truthmill::Program;
+                let blocks: &interp::TensorBlocks;
+                if search_layout {
+                    let (bl, vals) = layout2::plan_layouts_v2(&problem, prog,
+                        &layout2::PolicyParams::default());
+                    program_cow = layout::apply_layouts_to_program_v2(prog, &vals);
+                    let pb = layout::apply_layouts_to_blocks(&orig, &bl);
+                    blocks_owned = interp::to_tensor_blocks_permuted(&pb)?;
+                    program = &program_cow;
+                    blocks = &blocks_owned;
+                } else {
+                    program = prog;
+                    blocks = blocks_in;
+                }
+                let est = interp::estimate_memory(program, blocks, &problem.sizes, 1 << 30);
+                if est.peak_live_bytes / (1 << 20) > 6000 {
+                    return Ok(f64::INFINITY);
+                }
+                let plans = interp::prepare(program, blocks)?;
+                let mut times = Vec::new();
+                for i in 0..4 {
+                    let start = Instant::now();
+                    let outputs = interp::run_prepared(program, &plans, blocks, backend)?;
+                    std::hint::black_box(interp::checksum(&outputs));
+                    if i >= 1 {
+                        times.push(start.elapsed().as_secs_f64() * 1e3);
+                    }
+                }
+                times.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                Ok(times[times.len() / 2])
+            };
+
+            let mut current = problem.reference.clone();
+            let mut best_ms = time_program(&current, &tensor_blocks, &mut backend)?;
+            println!("{}", serde_json::json!({"kind":"search","problem":name,"round":0,"best_ms":best_ms}));
+            let mut accepted = 0;
+            let mut round = 0;
+            while accepted < budget {
+                round += 1;
+                let groups = transform::pair_occurrences(&current, &problem.sizes);
+                let mut cand: Vec<_> = groups
+                    .into_values()
+                    .filter(|o| o.len() >= 2)
+                    .collect();
+                cand.sort_by(|a, b| {
+                    let sa = (a.len() - 1) as f64 * a[0].formation_flops;
+                    let sb = (b.len() - 1) as f64 * b[0].formation_flops;
+                    sb.partial_cmp(&sa).unwrap()
+                });
+                let mut improved = false;
+                for occs in cand.into_iter().take(topk) {
+                    // skip oversized intermediates
+                    let first = &occs[0];
+                    let op = match &current.values[first.op] {
+                        truthmill::ValueDef::Einsum(op) => op,
+                        _ => continue,
+                    };
+                    let elems: usize = first
+                        .inter_order
+                        .iter()
+                        .map(|c| problem.sizes[&op.code.domains[&first.local_of_canon[c]]] as usize)
+                        .product();
+                    if elems * 8 > (256 << 20) {
+                        continue;
+                    }
+                    let trial = transform::share_introduce(&current, &occs);
+                    let ok = truthmill::verify(&problem, &trial)
+                        .map_err(|e| anyhow::anyhow!("verify error: {e:?}"))?;
+                    if !ok {
+                        println!("{}", serde_json::json!({"kind":"search-reject-verify","round":round}));
+                        continue;
+                    }
+                    let ms = time_program(&trial, &tensor_blocks, &mut backend)?;
+                    if ms < best_ms * 0.995 {
+                        println!("{}", serde_json::json!({"kind":"search","round":round,"accepted":accepted+1,"best_ms":ms,"prev_ms":best_ms,"group_size":occs.len()}));
+                        best_ms = ms;
+                        current = trial;
+                        accepted += 1;
+                        improved = true;
+                        break; // recompute groups after structural change
+                    }
+                }
+                if !improved {
+                    println!("{}", serde_json::json!({"kind":"search","round":round,"note":"no improving candidate","best_ms":best_ms}));
+                    break;
+                }
+            }
+            // exact verify + save
+            let ok = truthmill::verify(&problem, &current)
+                .map_err(|e| anyhow::anyhow!("verify error: {e:?}"))?;
+            anyhow::ensure!(ok);
+            std::fs::write(&out, serde_json::to_string(&current)?)?;
+            println!("{}", serde_json::json!({"kind":"search-done","problem":name,"accepted":accepted,"best_ms":best_ms,"out":format!("{}",out.display())}));
+        }
         Cmd::Flops { problem, sizes } => {
             let name = stem(&problem);
             let mut problem = load_problem(&problem, &sizes)?;
@@ -508,6 +648,23 @@ fn apply_transform(
             let ok = truthmill::verify(problem, &program)
                 .map_err(|e| anyhow::anyhow!("verify error: {e:?}"))?;
             anyhow::ensure!(ok, "truthmill::verify rejected cse-only transform");
+            Ok(program)
+        }
+        "share" | "sharecse" => {
+            let program = transform::share_pairs(
+                &problem.reference,
+                &problem.sizes,
+                100,
+                256 * (1 << 20),
+            );
+            let program = if transform == "sharecse" {
+                transform::cse_exact(&program)
+            } else {
+                program
+            };
+            let ok = truthmill::verify(problem, &program)
+                .map_err(|e| anyhow::anyhow!("verify error: {e:?}"))?;
+            anyhow::ensure!(ok, "truthmill::verify rejected share transform");
             Ok(program)
         }
         other => anyhow::bail!("unknown transform: {other}"),
