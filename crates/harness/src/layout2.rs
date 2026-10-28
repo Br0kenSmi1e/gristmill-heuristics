@@ -49,7 +49,7 @@ struct Use {
     ideal: Vec<usize>,
 }
 
-fn union_flops(code: &Code, sizes: &BTreeMap<DomainId, u64>) -> f64 {
+pub(crate) fn union_flops(code: &Code, sizes: &BTreeMap<DomainId, u64>) -> f64 {
     let mut labels: Vec<IndexId> = code.output.clone();
     for input in &code.inputs {
         for l in input {
@@ -67,7 +67,7 @@ fn union_flops(code: &Code, sizes: &BTreeMap<DomainId, u64>) -> f64 {
 /// Ideal storage perm for argument `arg_pos` of a binary einsum
 /// (free-first for A, contracted-first for B), in the entity's natural axis
 /// positions.
-fn ideal_binary_arg(code: &Code, arg_pos: usize) -> Option<Vec<usize>> {
+pub(crate) fn ideal_binary_arg(code: &Code, arg_pos: usize) -> Option<Vec<usize>> {
     if code.inputs.len() != 2 {
         return None;
     }
@@ -96,7 +96,7 @@ fn ideal_binary_arg(code: &Code, arg_pos: usize) -> Option<Vec<usize>> {
 
 /// Ideal producer-output perm for a binary einsum: [A-free..., B-free...]
 /// as positions into the natural output order.
-fn ideal_producer(code: &Code) -> Option<Vec<usize>> {
+pub(crate) fn ideal_producer(code: &Code) -> Option<Vec<usize>> {
     if code.inputs.len() != 2 {
         return None;
     }
@@ -119,7 +119,7 @@ fn ideal_producer(code: &Code) -> Option<Vec<usize>> {
 
 /// Ideal arg perm for a LinComb use: make the arg's storage order match the
 /// LinComb's output order.
-fn ideal_lincomb_arg(code: &Code, arg_pos: usize) -> Option<Vec<usize>> {
+pub(crate) fn ideal_lincomb_arg(code: &Code, arg_pos: usize) -> Option<Vec<usize>> {
     let labels = &code.inputs[arg_pos];
     // storage axis k should hold the axis whose label is output[k];
     // perm[k] = position of output[k]'s label in this arg's labels

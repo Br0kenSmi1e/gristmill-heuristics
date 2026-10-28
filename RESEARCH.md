@@ -149,81 +149,34 @@ Measured ((16,64) unless noted, best-of-N medians):
   (16,64); CCSD(T) D3 input alone is 8.6GB at (16,64) -> ran at (8,32).
 - Thread-count changes the cost landscape: v2 wins shrink or invert at t16
   (memory-bound); penalty must be thread-conditioned.
-## HL loop iterations completed (see trials/ for raw data)
+## White-box analytic cost model (v3 policy) and clean validation
 
-1. v0 per-use argmax layout -> CCSD 1.45x regression; diagnosed: multi-use
-   starvation.
-2. v1/v2 uniform entity cost model (blocks + intermediates, consumer-aware):
-   fixed v0 failure; exposed that full greedy splitting itself regresses CCSD
-   (0.53x) because the backend plans n-ary einsums well -> split only for
-   memory (factmem).
-3. Liveness freeing: fixed OOM, also large speed win (naive ccsd t16
-   1689 -> 743 ms).
-4. Penalty sweep on train: flat 2.7 fine; thread-conditioned penalties NOT
-   supported by data (within noise). Weak-signal learning; noted.
-5. cse_exact (exact-duplicate sharing; references contain up to 4x duplicate
-   contractions): small consistent win (ccsd t16 659 -> 627 ms).
-6. Final policy: {transform: cse-only / factmem-when-needed, layout v2,
-   penalty 2.7}. Held-out: adc2 1.42x/1.15x, ccsd_lambda 1.03x/1.11x,
-   ccsd_t 1.06x/1.10x, eom_ccsd 1.04x/0.89x (t1/t16). Geomean 1.13x t1,
-   1.06x t16. Residual failure: eom_ccsd t16 (small-op layout sensitivity at
-   high thread count; constant-penalty model inadequate there).
+Model: per op, walk the backend's OWN contraction tree (public
+ContractionTree/step_plan API); per step, clean vs slow GEMM rate by whether
+physical operand layouts equal the plan's canonical targets, plus permute /
+reduce / final-permute passes at bandwidth, floored by dispatch. Four
+calibrated rates per thread count (microbench). Per-op ranking vs measured:
+Spearman rho ~0.93 on ccd/ccsd. Layout assignment by iterated conditional
+modes over {natural}+per-use ideals with local cost deltas.
 
-## External comparison (gristmill, same backend, verified candidates)
-
-drudge-derived, gristmill-optimized CCD and CCSD schedules imported as
-truthmill candidate Programs (tools/export_gristmill_*.py); both pass
-truthmill::verify exactly and the numerical oracle. Interleaved timing at
-(16,64), ms, t1/t16:
-
-- CCD: naive 925/195; ours (CSE+layout) 601/169; gristmill 681/154;
-  gristmill+layout 395/121.
-- CCSD: naive 1903/619; ours 1528/589; gristmill 995/327; gristmill+layout
-  659/266.
-
-Reading: factorization and layout are complementary levers; composition wins
-everywhere. Our layout policy adds 1.2-1.7x on top of gristmill's FLOP-optimal
-schedules; on CCD ours alone beats gristmill alone at t1 despite 1.7x more
-FLOPs. CCSD exposes our missing piece: cross-term shared intermediates
-(gristmill executes ~5x fewer FLOPs than our per-op greedy there).
-
-Also fixed en route: oracle input generation now enforces cross-block symmetry
-relations (one projected representative per symmetry component) -- the
-gristmill candidate exposed that realism bug by failing the oracle despite
-passing verify.
-
-## HL search loop (M3): measured-acceptance factorization search
-
-New machinery: `share_pairs` (canonical pair signatures -> shared
-intermediates) and `harness search`: forward selection where each candidate
-intermediate is introduced only if MEASURED wall time improves (0.5%
-threshold), each step gated by truthmill::verify; artifacts saved as
-candidate Program JSONs.
-
-Preliminary (CCD/CCSD, (16,64)):
-- Blind FLOP-greedy sharing HURTS CCSD (2233 vs 1529 ms t1) -- same lesson as
-  greedy splitting: the model must not outrun the measurement.
-- Measured-acceptance search improves our policy: CCD 601 -> 508 ms t1,
-  CCSD 1529 -> 1269 ms t1 (both with layout v2 on top). Still behind
-  gristmill+layout (392 / 657): pair-sharing lacks (a) sum factorization
-  (A*B+A*C -> A*(B+C)), (b) multi-step lookahead, (c) chained intermediates
-  (pairs involving freshly-created intermediates).
-- LAYOUT-AWARE acceptance (evaluating candidates with layout planning
-  applied) showed an inconsistent baseline (reference+layout timed 3886 ms
-  in-loop vs 1384 via the time path) -- UNRESOLVED, possibly load-related;
-  investigate before trusting that variant.
-
-CONTAMINATION WARNING: from ~10:44 the box ran ~20 user julia jobs
-(load avg 24, swap touched). All timings after that point are unreliable
-in absolute value (interleaving keeps A/B fair-ish). Re-run key comparisons
-when the machine is free: share2/share3 need confirmation.
+Clean-machine results (Julia fleet paused; earlier batches had contention
+contamination up to 15x - methodology note: check load before benchmarking):
+- Model-driven layout FIXED the t16 regression pathology of the
+  constant-penalty heuristic (ccsd t16: v2 0.91x -> model 1.02x; eom t16:
+  0.89x -> 1.02x). Mechanism confirmed: thread-scaled rates in the model.
+- ccd/ccsd, cse+model vs naive: 1.30x/1.02x, 1.23x/1.02x (t1/t16).
+- gristmill composition: ccd g+model 449/139 (1.96x/1.60x vs naive);
+  ccsd g+model 1043/363 (1.85x/2.20x). Layout adds 1.04-1.5x over gristmill.
+- Held-out (model, untuned): adc2 1.26/1.62, ccsd_lambda 0.96/1.12,
+  ccsd_t 1.07/1.14, eom 1.03/1.02; geomean 1.07 t1 / 1.21 t16.
 
 ## Next investment
 
-Measured per-op cost model (profile expensive ops under layout variants; fit
-penalty surface as function of op size x threads) replacing the binary
-penalty; then blockwise symmetry exploitation (the largest untouched lever:
-~4x FLOPs+memory on antisymmetric tensors); cross-term shared intermediates
-beyond exact duplicates (structural CSE up to permutation); size-ladder
-validation at larger v/o on a bigger machine; standalone Rust codegen for
-winning schedules (interpreter and emitter share the schedule IR).
+Cross-term factorization search (beam over verified rewrites, priced by the
+analytic model - the model is what makes factorization search possible at
+all, since candidates evaluate in microseconds and extrapolate to unrunnable
+sizes). Target: close the CCSD gap (gristmill executes ~5x fewer FLOPs via
+shared intermediates) without importing gristmill. Then blockwise symmetry.
+
+## Superseded earlier notes (kept for audit)
+

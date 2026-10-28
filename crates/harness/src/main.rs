@@ -1,10 +1,12 @@
 //! Harness: correctness oracle and steady-state timing for truthmill problems
 //! executed on tenferro.
 
+mod costmodel;
 mod dense;
 mod interp;
 mod layout;
 mod layout2;
+mod layout3;
 mod oracle;
 mod transform;
 
@@ -118,6 +120,22 @@ enum Cmd {
         #[arg(long)]
         sizes: Option<String>,
     },
+    /// Validate the analytic cost model: per-op predicted vs measured times.
+    CostCheck {
+        problem: PathBuf,
+        #[arg(long)]
+        sizes: Option<String>,
+        #[arg(long, default_value = "1")]
+        threads: usize,
+        #[arg(long, default_value = "3")]
+        iters: usize,
+        #[arg(long, default_value = "0")]
+        seed: u64,
+        #[arg(long, default_value = "none")]
+        transform: String,
+        #[arg(long, default_value = "none")]
+        layout: String,
+    },
     /// Per-op timing profile of one program execution (prepared plans).
     Profile {
         problem: PathBuf,
@@ -194,7 +212,7 @@ fn main() -> Result<()> {
             let program = load_program(&problem, &transform, 256, candidate)?;
             let orig = dense::generate_inputs_for(&problem, &[&program], seed);
             let (program, blocks) = apply_layout_with(&problem, program, &layout, orig,
-                &layout2::PolicyParams::default())?;
+                &layout2::PolicyParams::default(), 1)?;
             let expected = oracle::eval_program(&problem, &problem.reference, &blocks.orig)?;
             let tensor_blocks = interp::to_tensor_blocks_permuted(&blocks.permuted)?;
             let mut backend = CpuBackend::with_threads(1).map_err(anyhow::Error::msg)?;
@@ -274,7 +292,7 @@ fn main() -> Result<()> {
                 p_small: p_small.unwrap_or(penalty),
                 thresh: p_thresh,
             };
-            let (program, blocks) = apply_layout_with(&problem, program, &layout, orig, &params)?;
+            let (program, blocks) = apply_layout_with(&problem, program, &layout, orig, &params, threads)?;
             let tensor_blocks = interp::to_tensor_blocks_permuted(&blocks.permuted)?;
             let est = interp::estimate_memory(&program, &tensor_blocks, &problem.sizes, 1 << 30);
             if !est.risky_ops.is_empty() {
@@ -482,6 +500,56 @@ fn main() -> Result<()> {
                 }
             }
         }
+        Cmd::CostCheck {
+            problem,
+            sizes,
+            threads,
+            iters,
+            seed,
+            transform,
+            layout,
+        } => {
+            let name = stem(&problem);
+            let problem = load_problem(&problem, &sizes)?;
+            if dense::estimate_input_bytes(&problem) / (1 << 20) > 3000 {
+                anyhow::bail!("memory guard: inputs too large; shrink sizes");
+            }
+            let program = apply_transform(&problem, &transform, 256)?;
+            let orig = dense::generate_inputs_for(&problem, &[&program], seed);
+            let (program, blocks) = apply_layout_with(
+                &problem,
+                program,
+                &layout,
+                orig,
+                &layout2::PolicyParams::default(),
+                threads,
+            )?;
+            let tensor_blocks = interp::to_tensor_blocks_permuted(&blocks.permuted)?;
+            let est = interp::estimate_memory(&program, &tensor_blocks, &problem.sizes, 1 << 30);
+            if est.peak_live_bytes / (1 << 20) > 6000 {
+                anyhow::bail!("memory guard tripped");
+            }
+            let rates = costmodel::rates_for_threads(threads);
+            let predicted = costmodel::program_costs(&program, &problem.sizes, &blocks.layouts, &rates);
+            let mut backend = CpuBackend::with_threads(threads).map_err(anyhow::Error::msg)?;
+            let measured =
+                interp::profile_ops(&program, &tensor_blocks, &mut backend, iters, &problem.sizes)?;
+            let mut rows = Vec::new();
+            for (p, m) in predicted.iter().zip(&measured) {
+                rows.push((p * 1e3, m.median_ms)); // both ms
+            }
+            let rho = spearman(&rows);
+            println!("problem {name} threads {threads}: spearman = {rho:.3}, n = {}", rows.len());
+            let mut sorted = rows.clone();
+            sorted.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+            println!("top-10 by measured: (measured_ms, predicted_ms)");
+            for (p, m) in sorted.iter().take(10) {
+                println!("  {m:9.2}  {p:9.2}");
+            }
+            let sum_p: f64 = rows.iter().map(|r| r.0).sum();
+            let sum_m: f64 = rows.iter().map(|r| r.1).sum();
+            println!("total measured {sum_m:.1} ms, predicted {sum_p:.1} ms");
+        }
         Cmd::Profile {
             problem,
             sizes,
@@ -497,8 +565,9 @@ fn main() -> Result<()> {
                 anyhow::bail!("memory guard: inputs too large; shrink sizes");
             }
             let program = apply_transform(&problem, &transform, 256)?;
-            let (program, blocks) = apply_layout(&problem, program, &layout, seed,
-                &layout2::PolicyParams::default())?;
+            let orig = dense::generate_inputs_for(&problem, &[&program], seed);
+            let (program, blocks) = apply_layout_with(&problem, program, &layout, orig,
+                &layout2::PolicyParams::default(), threads)?;
             let tensor_blocks = interp::to_tensor_blocks_permuted(&blocks.permuted)?;
             let est = interp::estimate_memory(&program, &tensor_blocks, &problem.sizes, 1 << 30);
             if !est.risky_ops.is_empty() || est.peak_live_bytes / (1 << 20) > 6000 {
@@ -535,17 +604,7 @@ fn main() -> Result<()> {
 pub struct LayoutResult {
     pub orig: dense::Blocks,
     pub permuted: layout::PermutedBlocks,
-}
-
-fn apply_layout(
-    problem: &Problem,
-    program: truthmill::Program,
-    layout: &str,
-    seed: u64,
-    params: &layout2::PolicyParams,
-) -> Result<(truthmill::Program, LayoutResult)> {
-    let orig = dense::generate_inputs(problem, seed);
-    apply_layout_with(problem, program, layout, orig, params)
+    pub layouts: layout::Layouts,
 }
 
 fn apply_layout_with(
@@ -554,17 +613,46 @@ fn apply_layout_with(
     layout: &str,
     orig: dense::Blocks,
     params: &layout2::PolicyParams,
+    threads: usize,
 ) -> Result<(truthmill::Program, LayoutResult)> {
     match layout {
         "none" => {
             let permuted = layout::apply_layouts_to_blocks(&orig, &layout::Layouts::new());
-            Ok((program, LayoutResult { orig, permuted }))
+            Ok((
+                program,
+                LayoutResult {
+                    orig,
+                    permuted,
+                    layouts: layout::Layouts::new(),
+                },
+            ))
         }
         "greedy-layout" => {
             let layouts = layout::plan_layouts(problem, &program);
             let program = layout::apply_layouts_to_program(&program, &layouts);
             let permuted = layout::apply_layouts_to_blocks(&orig, &layouts);
-            Ok((program, LayoutResult { orig, permuted }))
+            Ok((
+                program,
+                LayoutResult {
+                    orig,
+                    permuted,
+                    layouts,
+                },
+            ))
+        }
+        "model" => {
+            let rates = costmodel::rates_for_threads(threads);
+            let (blocks, values) = layout3::plan_layouts_model(problem, &program, &rates, 3);
+            let program = layout::apply_layouts_to_program_v2(&program, &values);
+            let permuted = layout::apply_layouts_to_blocks(&orig, &blocks);
+            Ok((
+                program,
+                LayoutResult {
+                    orig,
+                    permuted,
+                    layouts: blocks,
+                },
+            ))
         }
         "v2" => {
             let (blocks, values) = layout2::plan_layouts_v2(problem, &program, params);
@@ -585,7 +673,14 @@ fn apply_layout_with(
             }
             let program = layout::apply_layouts_to_program_v2(&program, &values);
             let permuted = layout::apply_layouts_to_blocks(&orig, &blocks);
-            Ok((program, LayoutResult { orig, permuted }))
+            Ok((
+                program,
+                LayoutResult {
+                    orig,
+                    permuted,
+                    layouts: blocks,
+                },
+            ))
         }
         other => anyhow::bail!("unknown layout: {other}"),
     }
@@ -669,6 +764,32 @@ fn apply_transform(
         }
         other => anyhow::bail!("unknown transform: {other}"),
     }
+}
+
+fn spearman(rows: &[(f64, f64)]) -> f64 {
+    fn ranks(xs: &[f64]) -> Vec<f64> {
+        let mut idx: Vec<usize> = (0..xs.len()).collect();
+        idx.sort_by(|&a, &b| xs[a].partial_cmp(&xs[b]).unwrap());
+        let mut r = vec![0.0; xs.len()];
+        for (rank, &i) in idx.iter().enumerate() {
+            r[i] = rank as f64;
+        }
+        r
+    }
+    let a: Vec<f64> = rows.iter().map(|r| r.0).collect();
+    let b: Vec<f64> = rows.iter().map(|r| r.1).collect();
+    let (ra, rb) = (ranks(&a), ranks(&b));
+    let n = ra.len() as f64;
+    let (ma, mb) = (ra.iter().sum::<f64>() / n, rb.iter().sum::<f64>() / n);
+    let mut cov = 0.0;
+    let mut va = 0.0;
+    let mut vb = 0.0;
+    for i in 0..ra.len() {
+        cov += (ra[i] - ma) * (rb[i] - mb);
+        va += (ra[i] - ma).powi(2);
+        vb += (rb[i] - mb).powi(2);
+    }
+    cov / (va * vb).sqrt().max(1e-300)
 }
 
 fn problem_name(problem: &Problem) -> String {
