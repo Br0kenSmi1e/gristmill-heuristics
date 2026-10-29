@@ -152,6 +152,10 @@ enum Cmd {
         /// Minimum relative improvement to accept a step.
         #[arg(long, default_value = "0.005")]
         accept: f64,
+        /// Selector scoring: model (wall-time, ours) | flops (FLOP-greedy,
+        /// replicates gristmill's selection policy on the same kernel spaces)
+        #[arg(long, default_value = "model")]
+        score: String,
     },
     /// Per-op timing profile of one program execution (prepared plans).
     Profile {
@@ -574,6 +578,7 @@ fn main() -> Result<()> {
             max_steps,
             out,
             accept,
+            score: score_mode,
         } => {
             let name = stem(&problem);
             let problem = load_problem(&problem, &sizes)?;
@@ -585,7 +590,18 @@ fn main() -> Result<()> {
             let output_ids: Vec<u32> = outputs.iter().map(|t| t.0).collect();
             let rates = costmodel::rates_for_threads(threads);
 
+            let log_sizes: std::collections::BTreeMap<gristmill_rewrites::repr::RangeId, f64> =
+                problem
+                    .sizes
+                    .iter()
+                    .map(|(dom, s)| (gristmill_rewrites::repr::RangeId(dom.0), (*s as f64).ln()))
+                    .collect();
             let score = |comp: &gristmill_rewrites::repr::Computation| -> f64 {
+                if score_mode == "flops" {
+                    // gristmill-policy replica: symbolic FLOPs only.
+                    return gristmill_rewrites::cost::log_flops(comp, &log_sizes)
+                        .unwrap_or(f64::INFINITY);
+                }
                 let prog =
                     bridge::computation_to_program(comp, &input_ids, &output_ids);
                 let (bl, vl) = layout3::plan_layouts_model(&problem, &prog, &rates, 1);
@@ -630,26 +646,32 @@ fn main() -> Result<()> {
                     if let Ok(ActionSpace::Biclique(space)) =
                         action::query(&state, ActionQuery::BicliqueFactor(action::DefinitionPosition(d)))
                     {
-                        let log_sizes: std::collections::BTreeMap<
-                            gristmill_rewrites::repr::RangeId,
-                            f64,
-                        > = problem
-                            .sizes
-                            .iter()
-                            .map(|(dom, s)| {
-                                (gristmill_rewrites::repr::RangeId(dom.0), (*s as f64).ln())
-                            })
-                            .collect();
                         let base_flops = gristmill_rewrites::cost::log_flops(
                             state.computation(),
                             &log_sizes,
                         )
                         .unwrap_or(f64::INFINITY);
                         let mut priced: Vec<(f64, usize, action::Action)> = Vec::new();
-                        for ci in 0..space.candidate_count() {
+                        let ncand = space.candidate_count();
+                        if std::env::var("H_DEBUG").is_ok() {
+                            eprintln!("[dbg] def{d}: {ncand} biclique candidates");
+                        }
+                        for ci in 0..ncand {
                             if let Some((nl, nr)) = space.shape(ci) {
-                                let left = vec![true; nl];
-                                let right = vec![true; nr];
+                              // full fire + leave-one-out variants
+                              let mut masks: Vec<(Vec<bool>, Vec<bool>)> =
+                                  vec![(vec![true; nl], vec![true; nr])];
+                              for i in 0..nl {
+                                  let mut l = vec![true; nl];
+                                  l[i] = false;
+                                  masks.push((l, vec![true; nr]));
+                              }
+                              for j in 0..nr {
+                                  let mut r = vec![true; nr];
+                                  r[j] = false;
+                                  masks.push((vec![true; nl], r));
+                              }
+                              for (left, right) in masks {
                                 if let Ok(act) = space.select(ci, &left, &right) {
                                     if let Ok(s2) = transition::apply(&state, act.clone()) {
                                         let f2 = gristmill_rewrites::cost::log_flops(
@@ -657,9 +679,13 @@ fn main() -> Result<()> {
                                             &log_sizes,
                                         )
                                         .unwrap_or(f64::INFINITY);
+                                        if std::env::var("H_DEBUG").is_ok() {
+                                            eprintln!("[dbg]   cand{ci} dflops={:.3}", f2 - base_flops);
+                                        }
                                         priced.push((f2 - base_flops, ci, act));
                                     }
                                 }
+                              }
                             }
                         }
                         priced.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
@@ -744,8 +770,20 @@ fn main() -> Result<()> {
                 if dbg {
                     eprintln!("[dbg] step {step} total: {:?}", step_start.elapsed());
                 }
+                let accepted = match &best {
+                    Some((c, _, _)) => {
+                        if score_mode == "flops" {
+                            // log_flops is additive: 0.5% relative FLOP
+                            // improvement is an absolute log difference.
+                            *c < cur - (1.0 + accept).ln()
+                        } else {
+                            *c < cur * (1.0 - accept)
+                        }
+                    }
+                    None => false,
+                };
                 match best {
-                    Some((c, act, desc)) if c < cur * (1.0 - accept) => {
+                    Some((c, act, desc)) if accepted => {
                         eprintln!("[select] step {step}: {desc}  {cur:.4} -> {c:.4} s");
                         trace.push(serde_json::json!({
                             "step": step, "action": desc,
@@ -779,6 +817,7 @@ fn main() -> Result<()> {
             }
             let record = serde_json::json!({
                 "kind": "select",
+                "score": score_mode,
                 "problem": name,
                 "sizes": sizes_map(&problem),
                 "threads": threads,

@@ -2,6 +2,22 @@
 
 ## Central claim
 
+**Headline (baseline = gristmill, the state-of-the-art FLOP optimizer, with
+our layout layer available to both sides):** a heuristic-learning selector
+over the gristmill-rewrites kernel -- same rewrite space, but candidates
+priced by a white-box wall-time model instead of greedy FLOP savings --
+produces schedules that beat gristmill's own output on this backend:
+**CCD 434 vs 449 ms, CCSD 736 vs 1043 ms (1.42x) single-thread; CCSD 263 vs
+363 ms (1.38x) at 16 threads** (clean machine, interleaved best-of-N).
+Selection is greedy, ~30 s per problem, every step exactly verified
+(kernel transition + truthmill::verify + numerical oracle).
+
+Supporting evidence for *why* the selector matters: a FLOP-greedy replica of
+gristmill's selection policy on the same kernel either stalls after one
+firing or accepts a memory-catastrophic intermediate (58 TB estimated peak on
+CCD) -- FLOP savings are blind to both structure preservation and memory,
+which is precisely what the wall-time model sees.
+
 A wall-time-trained, verification-gated heuristic system for scheduling
 symbolic quantum-chemistry tensor equations onto a dense tensor backend
 (tenferro-rs) beats the backend's own planner by 1.03–1.45× steady-state wall
