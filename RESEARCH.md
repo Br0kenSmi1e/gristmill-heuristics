@@ -19,9 +19,10 @@ PROTOCOL.md. What is broken: FAILURES.md. What we might try: IDEAS.md.
   with calibrated rates; per-op ranking rho ~ 0.93 on ccd/ccsd. This model
   is the compiler's heart — and F-004 is its known hole.
 - **Wall-time-priced selection is a real lever** (FLOP-greedy selection on
-  the same rewrite space loses or stalls), but the current selector is at
-  parity-to-behind vs same-equation gristmill (F-007) — the gap is
-  concentrated in eom_ccsd and adc2 and is the next investigation.
+  the same rewrite space loses or stalls). Confirmed same-equation losses
+  remain on ADC2/EOM t1 (F-007); the old six-problem geomean and MP3/CCSD
+  wins are retracted because they used sub-protocol timings, and MP3 also
+  fails the oracle (F-012/F-013).
 - **Composition of levers**: factorization (gristmill kernel) and layout
   are complementary; both are needed.
 - **Memory is a feasibility constraint**, not just performance (naive EOM
@@ -32,13 +33,15 @@ PROTOCOL.md. What is broken: FAILURES.md. What we might try: IDEAS.md.
 
 ## Open questions (ordered)
 
-1. F-007 / I-005: can bounded two-move lookahead retain the alternative
-   parenthesizations needed to escape the verified ADC2 greedy local optimum?
-2. F-004: what functional form prices high-rank/strided GEMM? (M1
+1. F-009: why does the archived MP3 selected schedule pass exact verify but
+   fail the numerical oracle? Correctness gate before any further exam.
+2. F-008 / F-005: replace lossy definition chunking with budgeted kernel
+   enumeration that preserves cross-chunk factorization.
+3. F-007: ADC2 greedy-path failure is diagnosed, but I-005 two-move lookahead
+   is retired; EOM path mechanism and a new fix candidate remain open.
+4. F-004: what functional form prices high-rank/strided GEMM? (M1
    calibration grid decides)
-3. F-005: enumeration budget that keeps kernel quality without the ccsd_t
-   blowup.
-4. IDEAS.md I-001..I-004, in that order.
+5. IDEAS.md I-001..I-004, in that order.
 
 ## Next investment
 

@@ -175,6 +175,12 @@ enum Cmd {
         /// signature-based proposals, verify only fired steps)
         #[arg(long, default_value = "kernel")]
         engine: String,
+        /// Experimental bounded parenthesize-then-action lookahead (I-005).
+        #[arg(long)]
+        lookahead: bool,
+        /// Split definitions above this many terms (0 disables splitting).
+        #[arg(long, default_value = "12")]
+        split_above: usize,
     },
     /// Per-op timing profile of one program execution (prepared plans).
     Profile {
@@ -196,6 +202,167 @@ enum Cmd {
         #[arg(long, default_value = "none")]
         layout: String,
     },
+}
+
+fn best_kernel_action(
+    state: &gristmill_rewrites::state::State,
+    score: &dyn Fn(&gristmill_rewrites::repr::Computation) -> f64,
+    log_sizes: &BTreeMap<gristmill_rewrites::repr::RangeId, f64>,
+    dbg: bool,
+) -> Option<(f64, gristmill_rewrites::action::Action, String)> {
+    use gristmill_rewrites::action::{self, ActionQuery, ActionSpace};
+    use gristmill_rewrites::transition;
+
+    let mut best: Option<(f64, action::Action, String)> = None;
+    let ndefs = state.computation().definitions.len();
+    let biclique_max_terms: usize = std::env::var("H_BICLIQUE_MAX_TERMS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(20);
+    for d in 0..ndefs {
+        let dstart = std::time::Instant::now();
+        let nterms_d = state.computation().definitions[d].rhs.len();
+        if nterms_d > biclique_max_terms {
+            // Kernel enumerates ALL maximal bicliques (exponential, no cutoff):
+            // skip large definitions until the kernel grows an enumeration budget.
+            continue;
+        }
+        if dbg {
+            eprintln!("[dbg] def{d}: {nterms_d} terms, query start");
+        }
+        // Biclique, with tiered prefilter: rank candidates by the kernel's
+        // symbolic log_flops, model-price only top-k.
+        if let Ok(ActionSpace::Biclique(space)) = action::query(
+            state,
+            ActionQuery::BicliqueFactor(action::DefinitionPosition(d)),
+        ) {
+            let base_flops = gristmill_rewrites::cost::log_flops(
+                state.computation(),
+                log_sizes,
+            )
+            .unwrap_or(f64::INFINITY);
+            let mut priced: Vec<(f64, usize, action::Action)> = Vec::new();
+            let ncand = space.candidate_count();
+            if dbg {
+                eprintln!("[dbg] def{d}: {ncand} biclique candidates");
+            }
+            for ci in 0..ncand {
+                if let Some((nl, nr)) = space.shape(ci) {
+                    // Full fire + leave-one-out variants.
+                    let mut masks: Vec<(Vec<bool>, Vec<bool>)> =
+                        vec![(vec![true; nl], vec![true; nr])];
+                    for i in 0..nl {
+                        let mut l = vec![true; nl];
+                        l[i] = false;
+                        masks.push((l, vec![true; nr]));
+                    }
+                    for j in 0..nr {
+                        let mut r = vec![true; nr];
+                        r[j] = false;
+                        masks.push((vec![true; nl], r));
+                    }
+                    for (left, right) in masks {
+                        if let Ok(act) = space.select(ci, &left, &right) {
+                            if let Ok(s2) = transition::apply(state, act.clone()) {
+                                let f2 = gristmill_rewrites::cost::log_flops(
+                                    s2.computation(),
+                                    log_sizes,
+                                )
+                                .unwrap_or(f64::INFINITY);
+                                if dbg {
+                                    eprintln!("[dbg]   cand{ci} dflops={:.3}", f2 - base_flops);
+                                }
+                                priced.push((f2 - base_flops, ci, act));
+                            }
+                        }
+                    }
+                }
+            }
+            priced.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+            for (_, ci, act) in priced.into_iter().take(8) {
+                if let Ok(s2) = transition::apply(state, act.clone()) {
+                    let c = score(s2.computation());
+                    let better = match &best {
+                        None => true,
+                        Some((b, _, _)) => c < *b,
+                    };
+                    if better {
+                        best = Some((c, act, format!("biclique def{d} cand{ci}")));
+                    }
+                }
+            }
+        }
+        if dbg {
+            eprintln!("[dbg] def{d} biclique phase: {:?}", dstart.elapsed());
+        }
+        // Permutation.
+        if let Ok(ActionSpace::Permutation(space)) = action::query(
+            state,
+            ActionQuery::PermutationFactor(action::DefinitionPosition(d)),
+        ) {
+            let snaps = space.snapshot();
+            for ci in 0..snaps.len() {
+                let (_, roots, uses) = &snaps[ci];
+                let rmask = vec![true; roots.len()];
+                let umask = vec![true; uses.len()];
+                if let Ok(act) = space.select(ci, &rmask, &umask) {
+                    if let Ok(s2) = transition::apply(state, act.clone()) {
+                        let c = score(s2.computation());
+                        let better = match &best {
+                            None => true,
+                            Some((b, _, _)) => c < *b,
+                        };
+                        if better {
+                            best = Some((c, act, format!("permute def{d} cand{ci}")));
+                        }
+                    }
+                }
+            }
+        }
+        if dbg {
+            eprintln!("[dbg] def{d} permutation phase: {:?}", dstart.elapsed());
+        }
+        // Parenthesize splits of multi-factor terms.
+        let nterms = state.computation().definitions[d].rhs.len();
+        for tpos in 0..nterms {
+            let nf = state.computation().definitions[d].rhs[tpos].factors.len();
+            if nf < 3 {
+                continue;
+            }
+            if let Ok(ActionSpace::Parenthesize(space)) =
+                action::query(&state, ActionQuery::Parenthesize(action::TermPosition {
+                    definition: action::DefinitionPosition(d),
+                    term: tpos,
+                }))
+            {
+                for cut in 1..nf {
+                    let mask: Vec<bool> = (0..nf).map(|i| i < cut).collect();
+                    if let Ok(act) = space.select(&mask) {
+                        if let Ok(s2) = transition::apply(state, act.clone()) {
+                            let c = score(s2.computation());
+                            if dbg {
+                                eprintln!(
+                                    "[dbg]   paren def{d} term{tpos} cut{cut}: {c:.6} s"
+                                );
+                            }
+                            let better = match &best {
+                                None => true,
+                                Some((b, _, _)) => c < *b,
+                            };
+                            if better {
+                                best = Some((
+                                    c,
+                                    act,
+                                    format!("paren def{d} term{tpos} cut{cut}"),
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    best
 }
 
 fn parse_sizes(problem: &mut Problem, overrides: &Option<String>) -> Result<()> {
@@ -664,6 +831,8 @@ let t0 = std::time::Instant::now();
             accept,
             score: score_mode,
             engine,
+            lookahead,
+            split_above,
         } => {
             let name = stem(&problem);
             let problem = load_problem(&problem, &sizes)?;
@@ -672,7 +841,9 @@ let t0 = std::time::Instant::now();
                 .map(|t| t.0)
                 .collect();
             let (mut computation, outputs) = bridge::problem_to_computation(&problem, 1000);
-            bridge::split_large_definitions(&mut computation, 12);
+            if split_above > 0 {
+                bridge::split_large_definitions(&mut computation, split_above);
+            }
             let output_ids: Vec<u32> = outputs.iter().map(|t| t.0).collect();
             let rates = costmodel::rates_for_threads(threads);
 
@@ -867,6 +1038,68 @@ let t0 = std::time::Instant::now();
                 if dbg {
                     eprintln!("[dbg] step {step} total: {:?}", step_start.elapsed());
                 }
+                let mut best = best.map(|(c, act, desc)| (c, vec![act], desc));
+                if lookahead {
+                    let base_flops = gristmill_rewrites::cost::log_flops(
+                        state.computation(),
+                        &log_sizes,
+                    )
+                    .unwrap_or(f64::INFINITY);
+                    let mut firsts: Vec<(f64, action::Action, String)> = Vec::new();
+                    for d in 0..state.computation().definitions.len() {
+                        for tpos in 0..state.computation().definitions[d].rhs.len() {
+                            let nf = state.computation().definitions[d].rhs[tpos].factors.len();
+                            if nf < 3 {
+                                continue;
+                            }
+                            if let Ok(ActionSpace::Parenthesize(space)) = action::query(
+                                &state,
+                                ActionQuery::Parenthesize(action::TermPosition {
+                                    definition: action::DefinitionPosition(d),
+                                    term: tpos,
+                                }),
+                            ) {
+                                for cut in 1..nf {
+                                    let mask: Vec<bool> = (0..nf).map(|i| i < cut).collect();
+                                    if let Ok(act) = space.select(&mask) {
+                                        if let Ok(s1) = transition::apply(&state, act.clone()) {
+                                            let f1 = gristmill_rewrites::cost::log_flops(
+                                                s1.computation(),
+                                                &log_sizes,
+                                            )
+                                            .unwrap_or(f64::INFINITY);
+                                            firsts.push((
+                                                f1 - base_flops,
+                                                act,
+                                                format!("paren def{d} term{tpos} cut{cut}"),
+                                            ));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    firsts.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+                    for (_, first, first_desc) in firsts.into_iter().take(4) {
+                        if let Ok(s1) = transition::apply(&state, first.clone()) {
+                            if let Some((c, second, second_desc)) =
+                                best_kernel_action(&s1, &score, &log_sizes, dbg)
+                            {
+                                let better = match &best {
+                                    None => true,
+                                    Some((b, _, _)) => c < *b,
+                                };
+                                if better {
+                                    best = Some((
+                                        c,
+                                        vec![first, second],
+                                        format!("lookahead {first_desc} => {second_desc}"),
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
                 let accepted = match &best {
                     Some((c, _, _)) => {
                         if score_mode == "flops" {
@@ -880,14 +1113,16 @@ let t0 = std::time::Instant::now();
                     None => false,
                 };
                 match best {
-                    Some((c, act, desc)) if accepted => {
+                    Some((c, actions, desc)) if accepted => {
                         eprintln!("[select] step {step}: {desc}  {cur:.4} -> {c:.4} s");
                         trace.push(serde_json::json!({
                             "step": step, "action": desc,
                             "before_s": cur, "after_s": c,
                         }));
-                        state = transition::apply(&state, act)
-                            .map_err(|e| anyhow::anyhow!("apply: {e:?}"))?;
+                        for act in actions {
+                            state = transition::apply(&state, act)
+                                .map_err(|e| anyhow::anyhow!("apply: {e:?}"))?;
+                        }
                         cur = c;
                     }
                     _ => {
