@@ -34,16 +34,20 @@ pre-registered adoption rules, and win or lose on the axes below.
   <= 1.05x the same-equation gristmill baseline's count, every corpus
   problem. This is a REAL gate, not a freebie: it holds for the incumbent
   engine by construction but constrains any challenger that displaces it.
-- **Axis 2 — backend-controlled schedule quality.** Same-equation gristmill
-  baseline (`tools/gristmill_baseline.py`) imported as a candidate and run
-  through OUR layout+memory stack via `harness time --candidate ...` vs our
-  full pipeline. Target: geomean >= 1.15x, no single loss beyond 2%.
-  CURRENT STATE: FAIL — geomean 0.90x t1 (F-007).
-- **Axis 3 — system-vs-system.** The baselines' own emitted code
-  (gristmill→Fortran+BLAS, pdaggerq-generated C++, SeQuant-generated code)
-  vs our emitted tenferro binary, same machine. Report achieved GF/s
-  alongside ms to decompose compiler-vs-backend. Target: parity at t16.
-  (Blocked on codegen, M3.)
+- **Axis 2 — same-backend decomposition (DIAGNOSTIC, not acceptance).**
+  Same-equation baseline candidates run through OUR stack on tenferro
+  (`harness time --candidate ...`). Not a spec axis (user decision:
+  backends are part of each system; the product comparison is Axis 3).
+  Kept as the attribution instrument: when Axis 3 shows a loss, this
+  decomposes it into compiler-vs-backend. Also the natural development
+  gate pre-M3, while our codegen does not exist yet.
+- **Axis 3 — system-vs-system (THE competitive axis).** Each baseline runs
+  its own backend in its best native configuration (gristmill→Fortran+BLAS,
+  pdaggerq-generated C++, SeQuant-generated code); we run tenferro. Same
+  machine, identical input equations for every system (the same-equation
+  rule applies regardless of backend). Report achieved GF/s alongside ms.
+  Target: geomean >= 1.0x (parity) at t16 across the corpus, no single
+  loss beyond 10%. (Blocked on codegen, M3.)
 - **Axis 4 — generality.** Drop-in problem: import a foreign-syntax
   equation set, produce verified competitive code, zero heuristic changes,
   within one day. (M4.)
@@ -55,9 +59,9 @@ pre-registered adoption rules, and win or lose on the axes below.
 
 Each baseline compiler is compared in two modes where feasible:
 **(A) same-backend** — its optimized equations imported as candidates and
-run through OUR stack on tenferro (Axis 2; isolates symbolic-optimization
-quality); **(B) native system** — its own emitted code, same machine
-(Axis 3; the product comparison, backend confound labeled).
+run through OUR stack on tenferro (diagnostic, Axis 2); **(B) native
+system** — its own emitted code and backend, same machine (Axis 3; the
+comparison that counts).
 
 1. gristmill — A: done (`tools/gristmill_baseline.py`, same-equation).
    B: planned (M4).
@@ -73,8 +77,8 @@ quality); **(B) native system** — its own emitted code, same machine
 
 - M1: calibration suite + cost model v2 (rank/stride-aware slow path) +
   model-vs-measured CI gate. Closes F-004.
-- M2: budgeted hybrid search + measured final acceptance; Axis 2 green on
-  the full corpus incl. ccsd_t. Closes F-005, F-007.
+- M2: budgeted hybrid search + measured final acceptance; same-backend
+  diagnostic green on the full corpus incl. ccsd_t. Closes F-005, F-007.
 - M3: codegen to standalone Rust for all 7 problems.
 - M4: second machine + pdaggerq/SeQuant imports + drop-in test. Axes 3, 4.
 - M5: blockwise symmetry storage. Axis 5.
