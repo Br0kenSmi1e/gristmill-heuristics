@@ -137,6 +137,10 @@ enum Cmd {
         #[arg(long, default_value = "none")]
         layout: String,
     },
+    /// Probe: time kernel query() per definition, no selector logic.
+    QueryProbe {
+        problem: PathBuf,
+    },
     /// HL selector: greedy rewrite search over gristmill-rewrites kernel,
     /// scored by the analytic wall-time model (layout-in-the-loop).
     Select {
@@ -570,6 +574,37 @@ fn main() -> Result<()> {
             let sum_p: f64 = rows.iter().map(|r| r.0).sum();
             let sum_m: f64 = rows.iter().map(|r| r.1).sum();
             println!("total measured {sum_m:.1} ms, predicted {sum_p:.1} ms");
+        }
+        Cmd::QueryProbe { problem } => {
+            let problem = load_problem(&problem, &None)?;
+            let (computation, outputs) = bridge::problem_to_computation(&problem, 1000);
+            eprintln!("bridge done: {} definitions", computation.definitions.len());
+            let t0 = std::time::Instant::now();
+            let state = gristmill_rewrites::state::State::new(computation, outputs)
+                .map_err(|e| anyhow::anyhow!("state: {e:?}"))?;
+            eprintln!("state::new (canonicalize+validate): {:.2?}", t0.elapsed());
+            for d in 0..state.computation().definitions.len() {
+                let nterms = state.computation().definitions[d].rhs.len();
+                let t0 = std::time::Instant::now();
+                let r = gristmill_rewrites::action::query(
+                    &state,
+                    gristmill_rewrites::action::ActionQuery::BicliqueFactor(
+                        gristmill_rewrites::action::DefinitionPosition(d),
+                    ),
+                );
+                let el = t0.elapsed();
+                match r {
+                    Ok(gristmill_rewrites::action::ActionSpace::Biclique(space)) => {
+                        println!(
+                            "def{d}: {nterms} terms, query {:.2?}, {} candidates",
+                            el,
+                            space.candidate_count()
+                        );
+                    }
+                    Ok(_) => println!("def{d}: non-biclique space"),
+                    Err(e) => println!("def{d}: query error {e:?} after {el:.2?}"),
+                }
+            }
         }
         Cmd::Select {
             problem,
