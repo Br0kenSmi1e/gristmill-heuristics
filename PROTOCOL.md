@@ -53,7 +53,16 @@ When fired, the milestone closes in order:
 3. CRITIC — a fresh-context reviewer reads RESEARCH.md, FAILURES.md,
    IDEAS.md, and the milestone trial records, and files challenges as new
    F-entries. The milestone stays OPEN until every challenge is answered
-   (fixed, or rebutted with evidence).
+   (fixed, or rebutted with evidence). Launch the critic session with
+   exactly this brief:
+
+   > You are the milestone critic for this compiler project. Read
+   > RESEARCH.md, FAILURES.md, IDEAS.md, and the newest entries in
+   > trials/. You did not do this work and owe it nothing. File every
+   > weakness you find as a new F-entry: unmeasured claims, contaminated
+   > comparisons, adoption rules bent, spec axes quietly skipped, failure
+   > mechanisms asserted but not verified. Do not suggest improvements;
+   > identify where the evidence does not support the claims.
 
 ## Standing rules
 
