@@ -63,3 +63,23 @@ Some compiler components are permanently open to challenge at tournaments:
 - cheapest test: roofline report per emitted schedule (part of M1 harness).
 - adopt IF: an op class is >5x below envelope under all layouts; then file
   upstream issue with the calibration data attached.
+
+## I-005 bounded lookahead over alternative parenthesizations [proposed]
+- hypothesis: retaining a bounded set of parenthesize→factor / parenthesize→
+  parenthesize paths escapes the F-007 greedy local optimum without requiring
+  gristmill's full TRAV search.
+- wins IF: a two-move path improves the current model objective where every
+  constituent first move is rejected; the ADC2 singles residual is the
+  exposing fixture, not a tuning set.
+- cheapest test: implement bounded two-move scoring behind an experimental
+  selector flag (top-8 second moves per first move), then compare one-step
+  vs two-step on {ccd, ccsd} under the model. Measure the best candidate on
+  train only; evaluate ADC2/EOM once at the milestone.
+- adopt IF: Axis 1 stays <=1.05x same-equation gristmill on every problem,
+  train geomean measured wall time improves >5%, no train problem regresses
+  >2%, and selector compile time is <10x one-step greedy. Otherwise retire
+  with the numbers.
+- addresses: F-007.
+- origin: gristmill `optimize(..., contr_strat=ContrStrat.TRAV)` retains
+  traversed contraction evaluations for subsequent sum optimization; local
+  source inspected at gristmill/optimize.py:3025-3037.

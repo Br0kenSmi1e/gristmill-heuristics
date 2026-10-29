@@ -135,6 +135,9 @@ enum Cmd {
         seed: u64,
         #[arg(long, default_value = "none")]
         transform: String,
+        /// External candidate Program JSON; skips transform
+        #[arg(long)]
+        candidate: Option<PathBuf>,
         #[arg(long, default_value = "none")]
         layout: String,
     },
@@ -547,6 +550,7 @@ fn main() -> Result<()> {
             iters,
             seed,
             transform,
+            candidate,
             layout,
         } => {
             let name = stem(&problem);
@@ -554,7 +558,7 @@ fn main() -> Result<()> {
             if dense::estimate_input_bytes(&problem) / (1 << 20) > 3000 {
                 anyhow::bail!("memory guard: inputs too large; shrink sizes");
             }
-            let program = apply_transform(&problem, &transform, 256)?;
+            let program = load_program(&problem, &transform, 256, candidate)?;
             let orig = dense::generate_inputs_for(&problem, &[&program], seed);
             let (program, blocks) = apply_layout_with(
                 &problem,
@@ -838,6 +842,11 @@ let t0 = std::time::Instant::now();
                                 if let Ok(act) = space.select(&mask) {
                                     if let Ok(s2) = transition::apply(&state, act.clone()) {
                                         let c = score(s2.computation());
+                                        if dbg {
+                                            eprintln!(
+                                                "[dbg]   paren def{d} term{tpos} cut{cut}: {c:.6} s"
+                                            );
+                                        }
                                         let better = match &best {
                                             None => true,
                                             Some((b, _, _)) => c < *b,

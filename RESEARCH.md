@@ -32,8 +32,8 @@ PROTOCOL.md. What is broken: FAILURES.md. What we might try: IDEAS.md.
 
 ## Open questions (ordered)
 
-1. F-007: which moves does gristmill-greedy make on eom/adc2 that our
-   rewrite space or selector misses? (per-op diff first)
+1. F-007 / I-005: can bounded two-move lookahead retain the alternative
+   parenthesizations needed to escape the verified ADC2 greedy local optimum?
 2. F-004: what functional form prices high-rank/strided GEMM? (M1
    calibration grid decides)
 3. F-005: enumeration budget that keeps kernel quality without the ccsd_t
