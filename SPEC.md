@@ -39,10 +39,11 @@ pre-registered adoption rules, and win or lose on the axes below.
   through OUR layout+memory stack via `harness time --candidate ...` vs our
   full pipeline. Target: geomean >= 1.15x, no single loss beyond 2%.
   CURRENT STATE: FAIL — geomean 0.90x t1 (F-007).
-- **Axis 3 — system-vs-system.** gristmill's emitted Fortran+BLAS vs our
-  emitted tenferro binary, same machine. Report achieved GF/s alongside ms
-  to decompose compiler-vs-backend. Target: parity at t16. (Blocked on
-  codegen, M3.)
+- **Axis 3 — system-vs-system.** The baselines' own emitted code
+  (gristmill→Fortran+BLAS, pdaggerq-generated C++, SeQuant-generated code)
+  vs our emitted tenferro binary, same machine. Report achieved GF/s
+  alongside ms to decompose compiler-vs-backend. Target: parity at t16.
+  (Blocked on codegen, M3.)
 - **Axis 4 — generality.** Drop-in problem: import a foreign-syntax
   equation set, produce verified competitive code, zero heuristic changes,
   within one day. (M4.)
@@ -50,11 +51,21 @@ pre-registered adoption rules, and win or lose on the axes below.
   >=2x peak-memory reduction with <10% wall-time penalty, oracle passing on
   symmetry-respecting inputs. (M5.)
 
-## Baselines (tiered)
+## Baselines
 
-1. gristmill, same-equation import — exists (`tools/gristmill_baseline.py`).
-2. pdaggerq, SeQuant — equation-level import as candidates. (M4.)
-3. TCE/OpMin — literature FLOP/memory numbers only; their regime
+Each baseline compiler is compared in two modes where feasible:
+**(A) same-backend** — its optimized equations imported as candidates and
+run through OUR stack on tenferro (Axis 2; isolates symbolic-optimization
+quality); **(B) native system** — its own emitted code, same machine
+(Axis 3; the product comparison, backend confound labeled).
+
+1. gristmill — A: done (`tools/gristmill_baseline.py`, same-equation).
+   B: planned (M4).
+2. pdaggerq — A + B (M4). Its pq_graph optimizer and C++ codegen make it a
+   full-pipeline baseline.
+3. SeQuant — A + B (M4). Factorization + libparenth ordering + codegen;
+   strongest symbolic optimizer of the three.
+4. TCE/OpMin — literature FLOP/memory numbers only; their regime
    (out-of-core) does not overlap our dense in-core envelope. Say so; do
    not fake-compare.
 
