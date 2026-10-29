@@ -14,7 +14,10 @@ named spec gap. Never "improve the metric" in the abstract.
 1. SELECT — the highest-priority open F-entry, or the next scheduled item.
 2. REPRODUCE — pin a minimal failing test/fixture FIRST. No fixture, no fix.
 3. DIAGNOSE — verify the mechanism (profile, trace, per-op diff) and record
-   it in the F-entry BEFORE attempting the fix.
+   it in the F-entry BEFORE attempting the fix. Then the mechanism chooses
+   the fix type: if engineering, apply it; if algorithmic, file an I-entry
+   with an adoption rule and link it from the F-entry's `fix candidates`
+   field — the tournament picks among candidate fixes.
 4. FIX — one targeted change.
 5. GATE, cheapest first, all must pass:
    a. `cargo test` (seconds)
@@ -70,9 +73,10 @@ When fired, the milestone closes in order:
 - **Protected sets.** Develop on {mp3, ccd, ccsd}; never tune against
   {ccsd_t, eom_ccsd, adc2, ccsd_lambda}; the drop-in test problem (CC2) is
   touched only at its milestone.
-- **Exploration budget.** Every milestone includes at least one
-  IDEAS.md pricing (a cheap decisive test, not an implementation).
-  Mandatory, so engineering pressure cannot crowd it out.
+- **Failures and ideas are linked, not scheduled.** There is no
+  research-vs-engineering calendar to choose: the failure queue drives both
+  kinds of work, because diagnosis decides whether each fix is an edit or
+  an experiment.
 - **Scope rule.** Building anything SPEC.md Layer 0 concedes (Wick
   expansion; a new execution backend) must first be filed as an F-entry
   against the spec. Note: building our own FACTORIZATION search is NOT

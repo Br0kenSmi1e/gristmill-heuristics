@@ -31,6 +31,7 @@ Some compiler components are permanently open to challenge at tournaments:
 - adopt IF: >10% under the time objective on >=2 corpus problems AND
   compile time <10x greedy. Otherwise retire with the numbers.
 - origin: gristmill-autoresearch DESIGN.md Stage 2 (designed, never run).
+- addresses: F-007.
 
 ## I-002 joint contraction-tree + layout DP [proposed]
 - hypothesis: two-phase optimization (tree first, layout after) is
@@ -51,6 +52,8 @@ Some compiler components are permanently open to challenge at tournaments:
   blockwise-compressed scheme; price with model v2.
 - adopt IF (Axis 5): >=2x peak-memory reduction with <10% wall-time
   penalty on problems with declared antisymmetry. (M5.)
+- addresses: the machine-envelope constraint (SPEC regime note) — the
+  headline-win path on Axis 3.
 
 ## I-004 tenferro upstream fixes as compiler moves [proposed]
 - hypothesis: where the ceiling is backend kernel quality (e.g. 0.6 GF/s

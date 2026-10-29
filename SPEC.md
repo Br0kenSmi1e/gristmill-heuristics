@@ -24,6 +24,12 @@ pre-registered adoption rules, and win or lose on the axes below.
   at (8,32) due to input footprint. Threads in {1, 16}, pinned.
 - Metric: steady-state per-iteration wall time, median of >=10 after >=3
   warmup, clean machine under the load guard.
+- Regime note (user decision): sizes are bounded by this machine (14 GB,
+  16 cores). All claims are machine-relative; the spec measures the
+  compiler, not the machine. Reaching beyond the in-core envelope
+  (tiling/spill/GPU) is out of scope UNTIL Axis 5 evidence says memory is
+  the binding constraint — at which point the envelope itself becomes the
+  target.
 
 ## Axes (each must be executable; commands are current harness names)
 
@@ -46,8 +52,10 @@ pre-registered adoption rules, and win or lose on the axes below.
   pdaggerq-generated C++, SeQuant-generated code); we run tenferro. Same
   machine, identical input equations for every system (the same-equation
   rule applies regardless of backend). Report achieved GF/s alongside ms.
-  Target: geomean >= 1.0x (parity) at t16 across the corpus, no single
-  loss beyond 10%. (Blocked on codegen, M3.)
+  Tiered targets: geomean >= 1.0x (parity) at t16 across the corpus =
+  SUCCESS; geomean >= 1.1x = STRONG; running a problem size where the
+  dense baselines exhaust memory (via Axis 5 storage) = HEADLINE.
+  (Blocked on codegen, M3.)
 - **Axis 4 — generality.** Drop-in problem: import a foreign-syntax
   equation set, produce verified competitive code, zero heuristic changes,
   within one day. (M4.)

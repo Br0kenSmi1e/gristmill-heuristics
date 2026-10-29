@@ -60,3 +60,6 @@ study (archive/RESEARCH-v1.md, tag `hl-study-final`).
 - data: archive/trials-v1/final_vs_gristmill.jsonl
 - NOTE: this entry is also the workflow's first validation — the
   same-equation-baseline discipline caught a false win before publication.
+- fix candidates: I-001 (if the diff shows greedy-selection conflicts);
+  a new I-entry for extending the rewrite space (if the diff shows
+  gristmill makes moves our space lacks). The per-op diff decides.
