@@ -3,7 +3,10 @@
 Read this first, every session. Then RESEARCH.md. Then pick work from
 FAILURES.md (fast loop) or run the milestone protocol (slow loop).
 
-## The fast loop (one iteration = hours)
+## The fast loop (one iteration)
+
+One iteration = ONE named work item, carried through its gates. Granularity
+is defined by the work item, never by elapsed time.
 
 Work item = close one open F-entry, price one IDEAS.md entry, or close one
 named spec gap. Never "improve the metric" in the abstract.
@@ -23,9 +26,19 @@ named spec gap. Never "improve the metric" in the abstract.
 7. COMPRESS — every ~10 iterations: fold closed F-entries into RESEARCH.md
    invariants; refactor if fix patterns revealed structural debt.
 
-## The slow loop (milestone boundary = days–weeks)
+## The slow loop (milestone boundary)
 
-A milestone closes when, in order:
+A milestone boundary is EVENT-DRIVEN, not scheduled. Any of these fires it:
+
+1. A spec-axis number changed (a landed fix touches an axis) — the exam
+   has new information to give.
+2. An IDEAS.md entry reaches `priced` and its adoption rule becomes
+   evaluable — tournament time.
+3. 10–15 iterations since the last exam with neither of the above — a
+   safety bound against endless looping, not a calendar.
+4. The user asks for one.
+
+When fired, the milestone closes in order:
 
 1. EXAM — the protected evaluation (SPEC.md axes) is run ONCE on a clean
    machine and reported as-is. It is never iterated against.
@@ -57,8 +70,9 @@ A milestone closes when, in order:
 - **Protected sets.** Develop on {mp3, ccd, ccsd}; never tune against
   {ccsd_t, eom_ccsd, adc2, ccsd_lambda}; the drop-in test problem (CC2) is
   touched only at its milestone.
-- **Exploration budget.** ~20% of iterations go to IDEAS.md entries priced
-  below their cheap-test threshold. Protected from engineering pressure.
+- **Exploration budget.** Every milestone includes at least one
+  IDEAS.md pricing (a cheap decisive test, not an implementation).
+  Mandatory, so engineering pressure cannot crowd it out.
 - **Scope rule.** Building anything SPEC.md Layer 0 concedes (Wick
   expansion, our own factorization kernel, a new backend) must first be
   filed as an F-entry against the spec.
