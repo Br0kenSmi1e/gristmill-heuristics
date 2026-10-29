@@ -471,3 +471,74 @@ fn emit_definition(
         };
         def_value.insert(base, final_value);
 }
+
+/// Split definitions with more than `max_terms` terms into chunk
+/// sub-definitions plus a final sum definition (selector-side budget for
+/// exponential biclique enumeration). Semantics preserved by construction;
+/// cross-chunk factorizations are lost (documented tradeoff).
+fn flush_chunk(
+    comp: &mut Computation,
+    new_defs: &mut Vec<RTensorDef>,
+    chunk: &mut Vec<RTerm>,
+    part_ids: &mut Vec<u32>,
+    next_id: &mut u32,
+    exts: &[RIndex],
+) {
+    if chunk.is_empty() {
+        return;
+    }
+    let pid = *next_id;
+    *next_id += 1;
+    comp.tensors.insert(
+        gristmill_rewrites::repr::TensorId(pid),
+        TensorInfo {
+            rank: exts.len(),
+            symmetry: Vec::new(),
+        },
+    );
+    new_defs.push(RTensorDef {
+        base: gristmill_rewrites::repr::TensorId(pid),
+        exts: exts.to_vec(),
+        rhs: std::mem::take(chunk),
+    });
+    part_ids.push(pid);
+}
+
+pub fn split_large_definitions(comp: &mut Computation, max_terms: usize) {
+    let mut next_id = comp.tensors.keys().map(|t| t.0).max().unwrap_or(0) + 1;
+    let mut new_defs: Vec<RTensorDef> = Vec::new();
+    for def in std::mem::take(&mut comp.definitions) {
+        if def.rhs.len() <= max_terms {
+            new_defs.push(def);
+            continue;
+        }
+        let exts = def.exts.clone();
+        let mut part_ids = Vec::new();
+        let mut chunk: Vec<RTerm> = Vec::new();
+        for term in def.rhs {
+            chunk.push(term);
+            if chunk.len() >= max_terms {
+                flush_chunk(comp, &mut new_defs, &mut chunk, &mut part_ids, &mut next_id, &exts);
+            }
+        }
+        flush_chunk(comp, &mut new_defs, &mut chunk, &mut part_ids, &mut next_id, &exts);
+        // Final sum definition with the original base id.
+        let rhs = part_ids
+            .iter()
+            .map(|pid| RTerm {
+                sums: Vec::new(),
+                coeff: num_rational::BigRational::from_integer(1.into()),
+                factors: vec![RTensorRef {
+                    tensor: gristmill_rewrites::repr::TensorId(*pid),
+                    indices: exts.iter().map(|e| e.id).collect(),
+                }],
+            })
+            .collect();
+        new_defs.push(RTensorDef {
+            base: def.base,
+            exts,
+            rhs,
+        });
+    }
+    comp.definitions = new_defs;
+}

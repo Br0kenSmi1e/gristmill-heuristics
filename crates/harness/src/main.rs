@@ -3,6 +3,7 @@
 
 mod bridge;
 mod costmodel;
+mod propose;
 mod dense;
 mod interp;
 mod layout;
@@ -160,6 +161,10 @@ enum Cmd {
         /// replicates gristmill's selection policy on the same kernel spaces)
         #[arg(long, default_value = "model")]
         score: String,
+        /// Engine: kernel (enumerate kernel spaces) | structural (direct
+        /// signature-based proposals, verify only fired steps)
+        #[arg(long, default_value = "kernel")]
+        engine: String,
     },
     /// Per-op timing profile of one program execution (prepared plans).
     Profile {
@@ -174,6 +179,9 @@ enum Cmd {
         seed: u64,
         #[arg(long, default_value = "none")]
         transform: String,
+        /// External candidate Program JSON; skips transform
+        #[arg(long)]
+        candidate: Option<PathBuf>,
         /// Layout planning: none|greedy-layout
         #[arg(long, default_value = "none")]
         layout: String,
@@ -585,7 +593,26 @@ fn main() -> Result<()> {
             eprintln!("state::new (canonicalize+validate): {:.2?}", t0.elapsed());
             for d in 0..state.computation().definitions.len() {
                 let nterms = state.computation().definitions[d].rhs.len();
+                // permutation space probe
                 let t0 = std::time::Instant::now();
+                let rp = gristmill_rewrites::action::query(
+                    &state,
+                    gristmill_rewrites::action::ActionQuery::PermutationFactor(
+                        gristmill_rewrites::action::DefinitionPosition(d),
+                    ),
+                );
+                let el = t0.elapsed();
+                match rp {
+                    Ok(gristmill_rewrites::action::ActionSpace::Permutation(space)) => {
+                        println!(
+                            "def{d}: permutation query {el:.2?}, {} families",
+                            space.snapshot().len()
+                        );
+                    }
+                    Ok(_) => println!("def{d}: non-permutation space"),
+                    Err(e) => println!("def{d}: permutation query error {e:?} after {el:.2?}"),
+                }
+let t0 = std::time::Instant::now();
                 let r = gristmill_rewrites::action::query(
                     &state,
                     gristmill_rewrites::action::ActionQuery::BicliqueFactor(
@@ -604,7 +631,7 @@ fn main() -> Result<()> {
                     Ok(_) => println!("def{d}: non-biclique space"),
                     Err(e) => println!("def{d}: query error {e:?} after {el:.2?}"),
                 }
-            }
+                            }
         }
         Cmd::Select {
             problem,
@@ -614,6 +641,7 @@ fn main() -> Result<()> {
             out,
             accept,
             score: score_mode,
+            engine,
         } => {
             let name = stem(&problem);
             let problem = load_problem(&problem, &sizes)?;
@@ -621,7 +649,8 @@ fn main() -> Result<()> {
                 .keys()
                 .map(|t| t.0)
                 .collect();
-            let (computation, outputs) = bridge::problem_to_computation(&problem, 1000);
+            let (mut computation, outputs) = bridge::problem_to_computation(&problem, 1000);
+            bridge::split_large_definitions(&mut computation, 12);
             let output_ids: Vec<u32> = outputs.iter().map(|t| t.0).collect();
             let rates = costmodel::rates_for_threads(threads);
 
@@ -650,6 +679,12 @@ fn main() -> Result<()> {
             use gristmill_rewrites::state::State;
             use gristmill_rewrites::transition;
 
+            if engine == "structural" {
+                return run_structural(
+                    &problem, &name, &input_ids, &output_ids, &outputs, &rates,
+                    threads, max_steps, accept, out,
+                );
+            }
             let mut state = State::new(computation, outputs.clone())
                 .map_err(|e| anyhow::anyhow!("state: {e:?}"))?;
             let mut cur = score(state.computation());
@@ -868,6 +903,7 @@ fn main() -> Result<()> {
             iters,
             seed,
             transform,
+            candidate,
             layout,
         } => {
             let name = stem(&problem);
@@ -875,7 +911,7 @@ fn main() -> Result<()> {
             if dense::estimate_input_bytes(&problem) / (1 << 20) > 3000 {
                 anyhow::bail!("memory guard: inputs too large; shrink sizes");
             }
-            let program = apply_transform(&problem, &transform, 256)?;
+            let program = load_program(&problem, &transform, 256, candidate)?;
             let orig = dense::generate_inputs_for(&problem, &[&program], seed);
             let (program, blocks) = apply_layout_with(&problem, program, &layout, orig,
                 &layout2::PolicyParams::default(), threads)?;
@@ -1123,4 +1159,141 @@ fn sizes_map(problem: &Problem) -> BTreeMap<u32, u64> {
         .iter()
         .map(|(d, s)| (d.0, *s))
         .collect()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_structural(
+    problem: &Problem,
+    name: &str,
+    input_ids: &[u32],
+    output_ids: &[u32],
+    outputs: &[gristmill_rewrites::repr::TensorId],
+    rates: &costmodel::CostRates,
+    threads: usize,
+    max_steps: usize,
+    accept: f64,
+    out: Option<PathBuf>,
+) -> Result<()> {
+    use gristmill_rewrites::state::State;
+    use gristmill_rewrites::verify::equivalent_states;
+
+    let (mut comp, _) = bridge::problem_to_computation(problem, 1000);
+    bridge::split_large_definitions(&mut comp, 12);
+    let dbg_p = std::env::var("H_DEBUG").is_ok();
+    let price = |comp: &gristmill_rewrites::repr::Computation| -> f64 {
+        let t0 = std::time::Instant::now();
+        let prog = bridge::computation_to_program(comp, input_ids, output_ids);
+        let t1 = std::time::Instant::now();
+        let (bl, vl) = layout3::plan_layouts_model(problem, &prog, rates, 1);
+        let t2 = std::time::Instant::now();
+        let prog = layout::apply_layouts_to_program_v2(&prog, &vl);
+        let c: f64 = costmodel::program_costs(&prog, &problem.sizes, &bl, rates)
+            .iter()
+            .sum();
+        if dbg_p {
+            eprintln!("    [price] bridge {:?} layout {:?} cost {:?}", t1-t0, t2-t1, t2.elapsed());
+        }
+        c
+    };
+    let t_start = std::time::Instant::now();
+    let mut cur = price(&comp);
+    let mut state = State::new(comp.clone(), outputs.to_vec())
+        .map_err(|e| anyhow::anyhow!("state: {e:?}"))?;
+    eprintln!("[structural] initial predicted {cur:.4} s");
+    let mut trace = Vec::new();
+    let mut rejected: Vec<(usize, Vec<u32>)> = Vec::new();
+    for step in 0..max_steps {
+        let proposals = propose::propose(&comp);
+        eprintln!("[structural] step {step}: {} proposals, {} defs",
+            proposals.len(), comp.definitions.len());
+        if proposals.is_empty() {
+            eprintln!("[structural] no more proposals at step {step}");
+            break;
+        }
+        let mut best: Option<(f64, usize)> = None;
+        for (pi, p) in proposals.iter().enumerate() {
+            if rejected
+                .iter()
+                .any(|(g, f)| *g == p.group_size && *f == p.free_domains)
+            {
+                continue; // class failed verification before; skip
+            }
+            eprintln!("[structural]   prop{pi}: group{} free{:?} ...", p.group_size, p.free_domains);
+            let t0 = std::time::Instant::now();
+            let comp2 = propose::apply_proposal(&comp, p);
+            eprintln!("[structural]   prop{pi}: applied, {} defs", comp2.definitions.len());
+            let t1 = std::time::Instant::now();
+            let c = price(&comp2);
+            eprintln!("[structural]   prop{pi}: apply {:?} price {:?} -> {c:.4}",
+                t1 - t0, t1.elapsed());
+            let better = match &best {
+                None => true,
+                Some((b, _)) => c < *b,
+            };
+            if better {
+                best = Some((c, pi));
+            }
+        }
+        match best {
+            Some((c, pi)) if c < cur * (1.0 - accept) => {
+                let comp2 = propose::apply_proposal(&comp, &proposals[pi]);
+                // Gate: exact equivalence via the kernel.
+                let state2 = State::new(comp2.clone(), outputs.to_vec())
+                    .map_err(|e| anyhow::anyhow!("state: {e:?}"))?;
+                let equiv = equivalent_states(&state, &state2)
+                    .map_err(|e| anyhow::anyhow!("verify error: {e:?}"))?;
+                if !equiv {
+                    eprintln!(
+                        "[structural] step {step}: proposal group{} free{:?} FAILED equivalence; blocklisted",
+                        proposals[pi].group_size, proposals[pi].free_domains
+                    );
+                    rejected.push((proposals[pi].group_size, proposals[pi].free_domains.clone()));
+                    trace.push(serde_json::json!({
+                        "step": step, "event": "verify_reject",
+                        "group": proposals[pi].group_size,
+                        "free_domains": proposals[pi].free_domains,
+                    }));
+                    continue; // try next step with fresh proposals
+                }
+                eprintln!(
+                    "[structural] step {step}: group{} free{:?}  {cur:.4} -> {c:.4} s",
+                    proposals[pi].group_size, proposals[pi].free_domains
+                );
+                trace.push(serde_json::json!({
+                    "step": step, "group": proposals[pi].group_size,
+                    "free_domains": proposals[pi].free_domains,
+                    "before_s": cur, "after_s": c,
+                }));
+                comp = comp2;
+                state = state2;
+                cur = c;
+            }
+            _ => {
+                eprintln!("[structural] converged at step {step}, predicted {cur:.4} s");
+                break;
+            }
+        }
+    }
+    let prog = bridge::computation_to_program(&comp, input_ids, output_ids);
+    if std::env::var("H_DEBUG").is_ok() {
+        std::fs::write("/tmp/dbg_program.json", serde_json::to_string_pretty(&prog)?)?;
+    }
+    let ok = truthmill::verify(problem, &prog).map_err(|e| anyhow::anyhow!("verify: {e:?}"))?;
+    eprintln!("[structural] truthmill::verify(final): {ok}");
+    if !ok {
+        anyhow::bail!("final program failed exact verification");
+    }
+    if let Some(path) = &out {
+        std::fs::write(path, serde_json::to_string(&prog)?)?;
+        eprintln!("[structural] wrote {}", path.display());
+    }
+    let record = serde_json::json!({
+        "kind": "select", "engine": "structural", "problem": name,
+        "sizes": sizes_map(problem), "threads": threads,
+        "predicted_s": cur,
+        "search_wall_s": t_start.elapsed().as_secs_f64(),
+        "trace": trace,
+    });
+    println!("{}", serde_json::to_string(&record)?);
+    Ok(())
 }

@@ -279,4 +279,28 @@ Design validation: the "selector replaces FLOP-greedy selection, kernel owns
 generation" hypothesis is CONFIRMED. Tiered scoring (symbolic prefilter ->
 wall-time model) mirrors the HL feedback tiers inside the selector itself.
 
+## Structural proposer (fast path) + the ccsd_t model failure it caught
+
+Second selector engine: signature-based pair-sharing proposals (O(T*F^2)
+hashing, no enumeration), model-priced (~1 ms/proposal), kernel-verified per
+fired step (equivalent_states), truthmill::verify + oracle at the end. Search
+wall time: ccd 0.04 s, ccsd 1.1 s, ccsd_t 5.4 s, eom 6 s (vs 30 s+ and hangs
+for the enumeration path). REACHED ccsd_t (enumeration cannot).
+
+Measured quality (candidate + model layout, t1/t16 ms):
+- ccd 563/171 (kernel-selector: 434/119); eom 2839/1271 (vs 1175/491);
+  ccsd_lambda 1212/626 (vs 650/358); adc2 70/81 (vs 101/87 - BETTER);
+  ccsd 1812/669 (vs 736/263); ccsd_t 8075/4250 - SLOWER than naive
+  (5051/3706): the model predicted 0.41 s, a 20x error.
+- Diagnosis (per-op profile of the ccsd_t candidate): the fired
+  intermediate-forming rank-6 ops run at ~0.6 GF/s - 100x below clean GEMM,
+  37x below the modeled slow-path rate. The binary clean/slow layout
+  classification is too coarse for high-rank operands. Model needs a
+  rank/shape-dependent slow-path term. THIS is the HL loop working as
+  designed: trace shows verify_reject events + the pricing failure is
+  localized, quantified, and actionable.
+- Also learned: model-only acceptance can ship regressions (ccsd_t). Either
+  measured spot-checks or a better slow-path model is required before
+  trusting fast selection on new shapes.
+
 ## Superseded earlier notes (kept for audit)
