@@ -35,7 +35,13 @@ pre-registered adoption rules, and win or lose on the axes below.
 
 - **Axis 0 — correctness (gate).** Every emitted schedule passes
   `harness check` (truthmill::verify + numerical oracle,
-  symmetry-respecting inputs). 100% pass, no flag to disable.
+  symmetry-respecting inputs). 100% pass, no flag to disable. Axis-0
+  development and protected-exam checks use (3,5): the independent scalar
+  oracle is exponential and full-size brute force is infeasible; exact
+  `truthmill::verify` remains mandatory for every emitted program regardless
+  of execution size. Performance axes use the corpus sizes above. Any
+  correctness failure stops the exam and voids performance claims for the
+  failing candidate. (Convention added 2026-10-29, F-015.)
 - **Axis 1 — FLOP quality (gate).** `harness flops` of our schedule
   <= 1.05x the same-equation gristmill baseline's count, every corpus
   problem. This is a REAL gate, not a freebie: it holds for the incumbent

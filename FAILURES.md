@@ -105,16 +105,24 @@ study (archive/RESEARCH-v1.md, tag `hl-study-final`).
 - regression: CCD selected-program FLOPs and predicted time no worse than
   the unsplit control; numerical oracle on emitted candidates.
 
-## F-009 MP3 selected schedule fails the numerical oracle [OPEN]
+## F-009 MP3 selected schedule fails the numerical oracle [CLOSED]
 - symptom: protected milestone Axis 0 stopped on `mp3_selected`: exact
   `truthmill::verify` passed, but the numerical oracle failed with worst
   relative difference 1.984844851549236 at sizes (3,5), model layout.
-- mechanism: UNKNOWN — first isolate candidate-vs-layout and inspect the
-  differing output against the reference. No performance exam was run after
-  this gate failure.
-- exposing fixture: `harness check benches/chemistry/mp3.json --sizes 0=3,1=5
-  --candidate benches/candidates/mp3_selected.json --layout model`.
-- data: trials/i005-lookahead.jsonl (milestone exam section).
+- mechanism: VERIFIED. Canonicalization uses composed symmetry-group
+  elements, but input generation propagated only along edges whose endpoint
+  was already a used access pattern. Two used blocks related through an
+  unused intermediate were independently random. Direct bridge roundtrip was
+  correct; State canonicalization changed single-term numerical values while
+  exact verify accepted them. A full-group regression failed on composed
+  permutation [1,0,3,2] before the fix.
+- fix: generate the complete access-pattern orbit, including unused
+  intermediates, so every composed cross-block relation is enforced.
+- exposing fixture / regression: `dense::tests::generated_mp3_inputs_
+  satisfy_declared_symmetries`, direct and canonicalized MP3 bridge-oracle
+  tests, and the original `harness check ... mp3_selected.json` command.
+- result: MP3 selected passes layout-none/model oracle; full cargo test
+  passes. Full-size scalar oracle was not used (exponential; F-015 convention).
 
 ---
 
@@ -185,7 +193,7 @@ study (archive/RESEARCH-v1.md, tag `hl-study-final`).
   retracted. F-009 remains the open correctness failure; no MP3 performance
   claim is made while that gate is red.
 
-## F-014 Provenance violation: I-005 test ran on uncommitted code; run configuration unrecorded [OPEN]
+## F-014 Provenance violation: I-005 test ran on uncommitted code; run configuration unrecorded [CLOSED — source committed and record superseded]
 - symptom: trials/i005-lookahead.jsonl records git 6ee4eee, but the
   `--lookahead` implementation (~243 lines in crates/harness/src/main.rs)
   exists only in the dirty working tree; commit 6ee4eee adds 11 lines and
@@ -200,8 +208,13 @@ study (archive/RESEARCH-v1.md, tag `hl-study-final`).
 - protocol reference: trials/README requires every line to carry the
   commit hash at run time; PROTOCOL gate 5a (cargo test) has no record for
   the selector change.
+- resolution: accepted. The exact experimental source is commit 4d04b21;
+  CCD control and ADC2 were reproduced after commit. A superseding trial
+  records explicit commands, `H_BICLIQUE_MAX_TERMS=1000`, all compile times,
+  load, oracle results, and cargo-test success. The original dirty-source
+  line remains as audit history, not as the basis for adoption.
 
-## F-015 Protected exam ran at non-spec sizes and produced no axis information beyond one gate failure [OPEN]
+## F-015 Protected exam ran at non-spec sizes and produced no axis information beyond one gate failure [CLOSED — Axis-0 size convention documented]
 - symptom: the milestone exam (trials/i005-lookahead.jsonl) ran Axis 0 at
   sizes (3,5). SPEC defines corpus sizes {(8,40),(16,64),(32,96)} and no
   Axis-0 size convention; no document records why (3,5) is the exam size.
@@ -210,6 +223,12 @@ study (archive/RESEARCH-v1.md, tag `hl-study-final`).
   tournament record (even a vacuous "no contested slot evaluable" line).
   As recorded, the milestone's protected evaluation does not correspond to
   the spec'd evaluation at any documented size.
+- resolution: accepted. SPEC now documents why Axis 0 uses (3,5): the
+  independent scalar oracle is exponential and full-size brute force is
+  infeasible (a (16,64) MP3 diagnostic hit the 300 s limit). Stopping at the
+  first failure is correct gate behavior; no Axis-1/2 claims were made. A
+  tournament record exists in the superseding trial. The F-009 fix is a new
+  Axis-0 event and permits one fresh protected exam.
 
 ## F-016 Held-out model error is untracked; the model that killed I-005 mispredicts ADC2's gap by ~70% [OPEN — response recorded, calibration owned by M1]
 - symptom: trials/f007-per-op-diff.jsonl shows ADC2 predicted gap

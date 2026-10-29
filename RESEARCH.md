@@ -30,18 +30,19 @@ PROTOCOL.md. What is broken: FAILURES.md. What we might try: IDEAS.md.
 - **Measurement hygiene is load-bearing**: one contaminated batch cost a
   full re-measurement cycle; one weak baseline fabricated a 1.42x "win".
   Both are now protocol rules.
+- **Oracle inputs must satisfy the full symmetry-group orbit**, not only
+  direct relations among used blocks. Composed relations through unused
+  intermediate access patterns are required by canonicalization (F-009).
 
 ## Open questions (ordered)
 
-1. F-009: why does the archived MP3 selected schedule pass exact verify but
-   fail the numerical oracle? Correctness gate before any further exam.
-2. F-008 / F-005: replace lossy definition chunking with budgeted kernel
+1. F-008 / F-005: replace lossy definition chunking with budgeted kernel
    enumeration that preserves cross-chunk factorization.
-3. F-007: ADC2 greedy-path failure is diagnosed, but I-005 two-move lookahead
+2. F-007: ADC2 greedy-path failure is diagnosed, but I-005 two-move lookahead
    is retired; EOM path mechanism and a new fix candidate remain open.
-4. F-004: what functional form prices high-rank/strided GEMM? (M1
-   calibration grid decides)
-5. IDEAS.md I-001..I-004, in that order.
+3. F-004 / F-016: what functional form prices high-rank/strided GEMM and
+   closes the ADC2 aggregate-gap error? (M1 calibration grid decides)
+4. IDEAS.md I-001..I-004, in that order.
 
 ## Next investment
 

@@ -234,9 +234,11 @@ pub fn generate_inputs_for(
                         .iter()
                         .map(|&p| cur_key[p])
                         .collect();
-                    if filled.contains_key(&q)
-                        || !pats.iter().any(|pat| pat.iter().map(|d| d.0).eq(q.iter().cloned()))
-                    {
+                    // Propagate through the FULL pattern orbit, including
+                    // unused intermediates. Canonicalization uses composed
+                    // symmetries; filtering to used patterns can leave the
+                    // endpoints of a composed relation independently random.
+                    if filled.contains_key(&q) {
                         continue;
                     }
                     let image = permute(&cur_block, &generator.permutation, generator.sign);
@@ -256,4 +258,72 @@ pub fn estimate_input_bytes(problem: &Problem) -> usize {
         .flat_map(|pats| pats.iter())
         .map(|pat| pat.iter().map(|d| problem.sizes[d] as usize).product::<usize>() * 8)
         .sum()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generated_mp3_inputs_satisfy_declared_symmetries() {
+        let mut problem = Problem::from_json(include_str!(
+            "../../../benches/chemistry/mp3.json"
+        ))
+        .unwrap();
+        problem.sizes.insert(DomainId(0), 3);
+        problem.sizes.insert(DomainId(1), 5);
+        let candidate: truthmill::Program = serde_json::from_str(include_str!(
+            "../../../benches/candidates/mp3_selected.json"
+        ))
+        .unwrap();
+        let blocks = generate_inputs_for(&problem, &[&candidate], 0);
+        for ((tensor, pattern), block) in &blocks {
+            let pattern: Vec<DomainId> = pattern.iter().map(|d| DomainId(*d)).collect();
+            let group = stabilizer_group(&problem.symmetries[&TensorId(*tensor)], &pattern);
+            for (permutation, sign) in group {
+                let image = permute(block, &permutation, sign);
+                let max_diff = block
+                    .data
+                    .iter()
+                    .zip(&image.data)
+                    .fold(0.0f64, |m, (x, y)| m.max((x - y).abs()));
+                assert!(
+                    max_diff < 1e-12,
+                    "tensor {tensor} pattern {pattern:?} violates {permutation:?}/{sign}: {max_diff}"
+                );
+            }
+            let generators = &problem.symmetries[&TensorId(*tensor)];
+            let mut group = vec![((0..pattern.len()).collect::<Vec<_>>(), 1i8)];
+            let mut position = 0;
+            while position < group.len() {
+                let (permutation, sign) = group[position].clone();
+                for generator in generators {
+                    let element = (
+                        compose(&permutation, &generator.permutation),
+                        sign * generator.sign,
+                    );
+                    if !group.contains(&element) {
+                        group.push(element);
+                    }
+                }
+                position += 1;
+            }
+            for (permutation, sign) in group {
+                let related_pattern: Vec<u32> =
+                    permutation.iter().map(|&p| pattern[p].0).collect();
+                if let Some(related) = blocks.get(&(*tensor, related_pattern)) {
+                    let image = permute(block, &permutation, sign);
+                    let max_diff = related
+                        .data
+                        .iter()
+                        .zip(&image.data)
+                        .fold(0.0f64, |m, (x, y)| m.max((x - y).abs()));
+                    assert!(
+                        max_diff < 1e-12,
+                        "tensor {tensor} pattern {pattern:?} violates composed cross-block symmetry {permutation:?}/{sign}: {max_diff}"
+                    );
+                }
+            }
+        }
+    }
 }

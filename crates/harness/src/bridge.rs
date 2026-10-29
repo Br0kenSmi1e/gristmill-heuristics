@@ -542,3 +542,67 @@ pub fn split_large_definitions(comp: &mut Computation, max_terms: usize) {
     }
     comp.definitions = new_defs;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn direct_mp3_bridge_roundtrip_matches_scalar_oracle() {
+        let mut problem = Problem::from_json(include_str!(
+            "../../../benches/chemistry/mp3.json"
+        ))
+        .unwrap();
+        problem.sizes.insert(DomainId(0), 3);
+        problem.sizes.insert(DomainId(1), 5);
+        let input_ids: Vec<u32> = crate::dense::collect_patterns(&problem)
+            .keys()
+            .map(|t| t.0)
+            .collect();
+        let (computation, outputs) = problem_to_computation(&problem, 1000);
+        let output_ids: Vec<u32> = outputs.iter().map(|t| t.0).collect();
+        let program = computation_to_program(&computation, &input_ids, &output_ids);
+        assert!(truthmill::verify(&problem, &program).unwrap());
+        let blocks = crate::dense::generate_inputs_for(&problem, &[&program], 0);
+        let expected = crate::oracle::eval_program(&problem, &problem.reference, &blocks).unwrap();
+        let actual = crate::oracle::eval_program(&problem, &program, &blocks).unwrap();
+        for (expected, actual) in expected.iter().zip(&actual) {
+            let max_diff = expected
+                .data
+                .iter()
+                .zip(&actual.data)
+                .fold(0.0f64, |m, (x, y)| m.max((x - y).abs()));
+            assert!(max_diff < 1e-12, "bridge roundtrip diff {max_diff}");
+        }
+    }
+
+    #[test]
+    fn canonicalized_mp3_bridge_roundtrip_matches_scalar_oracle() {
+        let mut problem = Problem::from_json(include_str!(
+            "../../../benches/chemistry/mp3.json"
+        ))
+        .unwrap();
+        problem.sizes.insert(DomainId(0), 3);
+        problem.sizes.insert(DomainId(1), 5);
+        let input_ids: Vec<u32> = crate::dense::collect_patterns(&problem)
+            .keys()
+            .map(|t| t.0)
+            .collect();
+        let (computation, outputs) = problem_to_computation(&problem, 1000);
+        let output_ids: Vec<u32> = outputs.iter().map(|t| t.0).collect();
+        let state = gristmill_rewrites::state::State::new(computation, outputs).unwrap();
+        let program = computation_to_program(state.computation(), &input_ids, &output_ids);
+        assert!(truthmill::verify(&problem, &program).unwrap());
+        let blocks = crate::dense::generate_inputs_for(&problem, &[&program], 0);
+        let expected = crate::oracle::eval_program(&problem, &problem.reference, &blocks).unwrap();
+        let actual = crate::oracle::eval_program(&problem, &program, &blocks).unwrap();
+        for (expected, actual) in expected.iter().zip(&actual) {
+            let max_diff = expected
+                .data
+                .iter()
+                .zip(&actual.data)
+                .fold(0.0f64, |m, (x, y)| m.max((x - y).abs()));
+            assert!(max_diff < 1e-12, "canonicalized bridge diff {max_diff}");
+        }
+    }
+}
