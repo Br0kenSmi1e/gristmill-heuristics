@@ -53,11 +53,14 @@ study (archive/RESEARCH-v1.md, tag `hl-study-final`).
 - planned fix (M1): load guard inside the timing command itself
 
 ## F-007 selector behind same-equation gristmill on confirmed ADC2/EOM cases [OPEN — ADC2 mechanism verified]
-- symptom: ADC2 and EOM-CCSD t1 losses are confirmed under the load guard.
-  The historical 0.90x six-problem geomean, MP3 win, and CCSD t16 win are
-  RETRACTED as unsupported: their archived runs used 4 iterations / 2 warmup
-  without load records (F-012), and MP3 used an oracle-failing candidate
-  (F-013). Earlier "1.42x CCSD win" was a baseline artifact — also retracted.
+- symptom: the valid a8bf146 exam measures six-problem geomean 0.902x t1 /
+  0.883x t16 vs same-equation gristmill. Complete speedups: MP3 1.105/1.041;
+  CCD 0.996/0.936; CCSD 0.947/1.201; CCSD-lambda 1.042/0.580;
+  EOM 0.794/0.811; ADC2 0.626/0.862 (t1/t16). The CCSD and lambda thread
+  inversions have NO verified mechanism (F-019). Axis 1 fails on all six
+  (FLOP ratios 1.258x to 1397.562x; F-018). The older sub-protocol archive
+  remains retracted; these numbers replace it. Earlier "1.42x CCSD win"
+  was a baseline artifact — also retracted.
 - mechanism: VERIFIED on the ADC2 singles residual (11 terms). The selected
   schedule reproduces exactly and stops after one parenthesization; its
   unfactored three-factor contractions dominate the per-op profile. Gristmill
@@ -157,8 +160,7 @@ study (archive/RESEARCH-v1.md, tag `hl-study-final`).
   quality and was reverted" has no trial line and no numbers.
 - resolution: accepted. F-008 is now CCD-only and the CCSD counter-evidence
   is explicit. The superseding trial records FLOPs, both SHA-256 hashes, and
-  the prefilter outcomes; the reverted prefilter makes no mechanism claim. A mechanism
-  marked VERIFIED rests partly on unlogged experiments.
+  the prefilter outcomes; the reverted prefilter makes no mechanism claim.
 
 ## F-012 F-007 comparative numbers rest on sub-protocol measurements [CLOSED — unsupported aggregate retracted]
 - symptom: "geomean 0.90x t1 across six problems; losses 0.77x/0.67x; wins
@@ -174,10 +176,9 @@ study (archive/RESEARCH-v1.md, tag `hl-study-final`).
   have no guard-compliant measurement. Given F-006 (a contaminated batch
   once invalidated an entire era), the 0.90x figure is not currently
   supported to protocol standard.
-- resolution: accepted. The geomean and all unconfirmed component wins are
-  retracted in F-007/RESEARCH.md. Only ADC2/EOM t1 directions remain claims;
-  a full corpus comparison requires a future valid exam, not reuse of these
-  archived numbers.
+- resolution: accepted. The archived aggregate was retracted. A later valid
+  a8bf146 exam independently supplies guard-compliant six-problem numbers;
+  CCSD(T) is excluded because its memory guard stopped that exam.
 
 ## F-013 mp3 "win" was timed on a candidate that fails the numerical oracle [CLOSED — win retracted]
 - symptom: F-007's symptom and RESEARCH.md count mp3 as a selector win;
@@ -189,9 +190,9 @@ study (archive/RESEARCH-v1.md, tag `hl-study-final`).
   every line, while the ccd, ccsd, ccsd_lambda, eom_ccsd, and adc2 pairs
   all match exactly. The divergence was visible in the archived data and
   was never connected to the timing claims until the exam stopped on it.
-- resolution: accepted. The MP3 win and every aggregate containing it are
-  retracted. F-009 remains the open correctness failure; no MP3 performance
-  claim is made while that gate is red.
+- resolution: accepted. The archived MP3 win was retracted. After F-009 was
+  fixed, the a8bf146 exam passed Axis 0 and independently measured valid MP3
+  speedups of 1.105x t1 / 1.041x t16.
 
 ## F-014 Provenance violation: I-005 test ran on uncommitted code; run configuration unrecorded [CLOSED — source committed and record superseded]
 - symptom: trials/i005-lookahead.jsonl records git 6ee4eee, but the
@@ -230,6 +231,157 @@ study (archive/RESEARCH-v1.md, tag `hl-study-final`).
   tournament record exists in the superseding trial. The F-009 fix is a new
   Axis-0 event and permits one fresh protected exam.
 
+## Critic challenges (milestone after the a8bf146 protected exam; filed by fresh-context critic, milestone stays OPEN until each is fixed or rebutted with evidence)
+
+## F-018 Axis-1 gate fails on all six measured problems — including the entire train corpus — and no F-entry owns the gate failure [OPEN — gate owner recorded, mechanisms unverified]
+- symptom: trials/exam-a8bf146.jsonl records axis1_pass=false, failures=6,
+  FLOP ratios from 1.2581x (ccd) to 1397.5622x (ccsd_lambda). The train
+  corpus fails too: mp3 1.6247x, ccd 1.2581x, ccsd 3.9981x. SPEC Axis 1:
+  "<= 1.05x the same-equation gristmill baseline's count, every corpus
+  problem. This is a REAL gate ... it holds for the incumbent engine by
+  construction." The exam falsifies "by construction": the incumbent's own
+  selected schedules fail the gate on every measured problem. This
+  contradiction between SPEC text and measured reality is filed nowhere.
+- mechanism ownership gap: F-007's VERIFIED mechanism covers the ADC2
+  singles residual (11 terms) only; the EOM entry explicitly declines to
+  claim a mechanism. The ccsd_lambda (1397x), eom_ccsd (39x), ccsd (4.0x),
+  mp3 (1.62x), and ccd (1.26x) FLOP gaps have no verified mechanism and no
+  dedicated F-entry; a corpus-wide gate failure is carried as a symptom
+  inside an entry scoped to "confirmed ADC2/EOM cases."
+- unrecorded configuration skew: the I-005 supersession records ccsd
+  one-step FLOP ratio 5.0185x (unsplit, H_BICLIQUE_MAX_TERMS=1000) while the
+  exam's ccsd row shows 3.9981x — the exam's timed candidates were generated
+  under selector configurations that the exam line does not record, so the
+  diagnosis numbers and the exam numbers are not known to describe the same
+  schedules.
+- response: accepted. This entry owns the corpus-wide Axis-1 failure; SPEC no
+  longer claims incumbent green by construction. Only ADC2 has a verified
+  mechanism; MP3/CCD/CCSD/lambda/EOM mechanisms remain open work. Historical
+  selector configurations are unknown, so I-005 and exam FLOP ratios are not
+  asserted to describe identical schedules. Structured run records now pin
+  every timed candidate by SHA-256.
+
+## F-019 F-007's symptom selectively characterizes the exam: unremarked losses and unexplained t1/t16 inversions [CLOSED — complete results reported, inversions owned]
+- symptom: F-007 names losses "ADC2 0.626x t1, EOM 0.794x t1, CCSD-lambda
+  0.580x t16" and wins "MP3 and CCSD t16". The exam rows show 7 of 12 cells
+  below 1.0 — additionally ccd t16 0.9363x, ccsd t1 0.9471x, adc2 t16
+  0.8623x, eom_ccsd t16 0.8108x, none remarked. Two thread-regime inversions
+  have no recorded mechanism or even hypothesis: ccsd loses t1 (0.9471x) but
+  wins t16 (1.2006x); ccsd_lambda wins t1 (1.0421x) but loses t16 (0.5799x).
+  RESEARCH.md inherits the selective subset ("MP3 and CCSD-t16 wins are
+  supported; ADC2/EOM losses ... are supported"), rendering ccd/ccsd mixed
+  results invisible in the synthesis.
+- resolution: accepted. F-007 and RESEARCH.md now report every t1/t16 cell.
+  CCSD and CCSD-lambda thread inversions are explicitly unmeasured mechanisms,
+  not implied wins or layout effects.
+
+## F-020 I-005 retirement: the pre-registered adoption rule was evaluated on incomplete problem sets [CLOSED — incomplete clauses marked unevaluated, Axis-1 clause dispositive]
+- symptom: the adopt rule reads "train geomean measured wall time improves
+  >5%, no train problem regresses >2%". Train is {mp3, ccd, ccsd}. The
+  superseding trial (trials/i005-lookahead.jsonl, 4d04b21) measures only ccd
+  and ccsd; mp3 was never timed under either arm and no challenger FLOP
+  ratio is recorded for it. The recorded train_geomean_speedup 1.0367 is a
+  two-problem geomean labeled as the train geomean; for the >5% clause to
+  have passed, the unmeasured mp3 arm would have needed a >7.7% lookahead
+  win, so that clause is unevaluated, not failed. The idea text also says
+  "evaluate ADC2/EOM once at the milestone"; EOM was never evaluated for
+  I-005. The disposition "retired_mechanically" is rescued only by the
+  Axis-1 clause (challenger ratios ccd 1.2648x, ccsd 1.5996x, both red),
+  which is sufficient — but the recorded evidence does not cover the rule
+  as written, and no trial line states that mp3/EOM were deliberately
+  skipped or why.
+- resolution: accepted. The 1.0367 value is now labeled a two-problem
+  geomean; MP3/EOM and the full train-geomean clause are unevaluated. I-005
+  is retired solely because its measured CCD/CCSD candidates independently
+  violate the Axis-1 adoption clause. The tournament record states this.
+
+## F-021 The a8bf146 exam record does not institutionalize the F-006/F-013 lessons: sizes, iteration counts, checksums, and per-benchmark load are all absent [OPEN — structured records added, per-run load pending F-006]
+- symptom: the protected-exam-axis1-axis2 line records no problem sizes
+  (SPEC's corpus has three; which one produced the rows is knowable only by
+  inference from F-007 fixtures), no iters/warmup fields (the protocol's
+  ">=10 after >=3 warmup" compliance exists only as note prose, the same
+  attest-in-prose pattern whose absence made F-012's retraction necessary),
+  and no per-run output checksums — F-013's false win was detectable
+  precisely in archived checksum divergence, and the new exam schema drops
+  that signal. One load triplet covers a six-problem x two-candidate x
+  two-thread batch and is byte-identical to the Axis-0 line's load,
+  i.e. sampled once and copied rather than recorded "at start" of each
+  benchmark as trials/README specifies. The f007-per-op-diff line uses yet
+  another load schema (single scalars per phase). The structural fix F-006
+  names (runner refuses under load, records load per run) remains unbuilt.
+- response: accepted. trials/exam-a8bf146-runs.jsonl adds sizes, 10/3
+  iteration/warmup fields, min/median/max, checksums, and candidate hashes
+  for all 24 runs. Batch-start load is explicitly scoped as such; per-run
+  load was not measured and is not fabricated. F-006 retains that structural
+  blocker.
+
+## F-022 The ADC2 anchor baseline differs ~15% across two guard-compliant sessions; unremarked, and F-016's calibration depends on which is right [CLOSED — variance recorded, calibration claim scoped]
+- symptom: adc2 same-equation gristmill t1 measured 58.7 ms in
+  trials/f007-per-op-diff.jsonl (f16cb09, load 1.32) vs 67.929 ms in the
+  a8bf146 exam (load [0.55,1.22,1.33]) — 15.6% apart on the anchor baseline
+  of the headline loss. adc2_selected agrees within 3.9% (112.7 vs 108.5),
+  so the discrepancy is not uniform session drift. The headline ADC2 loss
+  magnitude (0.6261x) and F-016's recorded model error ("predicted gap
+  1.14x vs measured 1.92x") both use the 58.7 ms figure; F-016 is now an
+  M1 calibration exposing case, yet which session anchors it has never
+  been examined. No entry records the discrepancy.
+- resolution: accepted. Both sessions are now explicit: gristmill 58.7 vs
+  67.929 ms and selected 112.7 vs 108.492 ms. F-016 uses a measured-gap RANGE
+  of 1.60–1.92x vs 1.14x predicted, not a privileged baseline session. The
+  underprediction survives either anchor; no cause for the variance is claimed.
+
+## F-023 The protected exam ran with a known-blocking memory cap, spending the run-once budget on a void ccsd_t component [CLOSED — timeline rebutted, sequencing recorded]
+- symptom: F-017 was OPEN with a VERIFIED mechanism before the exam fired:
+  the harness default 6000 MB cap sits below ccsd_t's (8,32) estimated peak
+  8587 MB, which itself sits below SPEC's 14 GB envelope. The exam
+  predictably stopped at the ccsd_t gristmill t1 baseline guard, produced
+  no ccsd_t timing, and is reported incomplete. PROTOCOL grants one exam
+  run per event and forbids iterating it; that single run was consumed on
+  a configuration whose ccsd_t failure was known in advance. No ledger
+  entry records that this sequencing was a deliberate trade-off (versus
+  deferring the exam until the planned F-017 cap fix, or setting the
+  SPEC-consistent cap beforehand), so the decision is unauditable.
+- resolution: the premise is rebutted by the repository timeline. F-017 was
+  filed AFTER this exam first observed the baseline's 8587 MB estimate; no
+  prior baseline measurement established that exact blocker. The run was not
+  a deliberate trade-off and was not rerun. F-017 owns the cap for the next
+  milestone.
+
+## F-024 Provenance recurrence: exam log untracked and responding ledger edits uncommitted at critic time [CLOSED — exam evidence and responses committed]
+- symptom: F-014 (CLOSED) established the class — decisive records not
+  reproducible from the repository — and its resolution stated "future
+  trials require committed source." At this critic's reading: the exam ran
+  on committed source (a8bf146, satisfying the narrow resolution), but
+  trials/exam-a8bf146.jsonl is untracked and the FAILURES.md/RESEARCH.md
+  updates responding to the exam are uncommitted working-tree
+  modifications. The audit-trail half of the F-014 lesson recurred within
+  one milestone. Related ledger-integrity nit: F-011's entry ends with the
+  sentence "A mechanism marked VERIFIED rests partly on unlogged
+  experiments" appended AFTER its resolution paragraph — a fragment of the
+  original challenge left dangling so the closed entry contradicts itself.
+- resolution: accepted. The exam logs, structured run records, tournament
+  disposition, and these ledger responses are committed together in the
+  milestone-response commit. F-011's dangling challenge fragment is removed.
+
+## F-025 Tournament record covers only I-005; standing slot challengers have no disposition, and the displacement rule is currently unsatisfiable [CLOSED — complete disposition recorded]
+- symptom: IDEAS.md's contested factorization slot names I-001 and "the
+  structural proposer" as standing challengers. The milestone tournament
+  line (trials/i005-lookahead.jsonl, 4d04b21) records only I-005 — which
+  was a selector lookahead, not a listed slot challenger. I-001 (proposed,
+  never priced) and the structural proposer (named a challenger but never
+  given an I-entry, despite ccd_struct/ccsd_t_struct/etc. candidates
+  existing in benches/candidates/) received no tournament disposition, not
+  even a "not evaluable" line. Separately, the slot's displacement rule
+  requires a challenger to "keep Axis 1 green (<=1.05x gristmill FLOPs on
+  every corpus problem)" — a condition the incumbent itself fails on all
+  six measured problems (exam-a8bf146). The contested-slot rules as
+  written presume a green incumbent; no ledger entry notes that the rule
+  is presently unsatisfiable or what it means while Axis 1 is red.
+- resolution: accepted. trials/tournament-a8bf146.jsonl records I-001 and
+  the structural proposer as NOT EVALUABLE and I-005 retired. IDEAS.md states
+  that the incumbent is Axis-1 red and no displacement tournament occurs
+  until that gate is restored; no challenger is silently adopted or retired.
+
 ## F-016 Held-out model error is untracked; the model that killed I-005 mispredicts ADC2's gap by ~70% [OPEN — response recorded, calibration owned by M1]
 - symptom: trials/f007-per-op-diff.jsonl shows ADC2 predicted gap
   119.9/105.1 = 1.14x vs measured 112.7/58.7 = 1.92x. F-004 covers only
@@ -240,7 +392,21 @@ study (archive/RESEARCH-v1.md, tag `hl-study-final`).
   (F-010) and to rank all F-007 mechanisms; its held-out quantitative
   error has no calibration record and no owner.
 - response: accepted as an M1 calibration requirement. ADC2's 1.14x predicted
-  vs 1.92x measured gap is now an explicit F-004/F-016 exposing case. I-005
-  was not killed on that model margin: measured train A/B failed adoption.
+  vs 1.60–1.92x measured gap RANGE (two load-recorded sessions, F-022) is an
+  explicit F-004/F-016 exposing case. I-005 was not killed on that model
+  margin: measured CCD/CCSD Axis-1 failure forced retirement.
   No held-out calibration or parameter tuning is permitted; evaluate model v2
   on this case only at a milestone.
+
+## F-017 CCSD(T) exam blocked by harness 6 GB limit below the 14 GB regime [OPEN]
+- symptom: the a8bf146 protected exam reached ccsd_t gristmill t1 and stopped
+  before timing: estimated peak 8587 MB (inputs 137 MB) vs default 6000 MB.
+- mechanism: VERIFIED by the runner guard. SPEC allows this machine's 14 GB
+  envelope and selects ccsd_t at (8,32) to fit it, but `harness time` defaults
+  to a smaller 6000 MB cap. The baseline was not run and no timing exists.
+- exposing fixture: `harness time benches/chemistry/ccsd_t.json --sizes
+  0=8,1=32 --threads 1 --candidate benches/candidates/ccsd_t_gristmill.json
+  --layout model` with default `--max-mem-mb`.
+- planned fix: make the exam memory cap an explicit SPEC-consistent setting,
+  with actual allocation safety retained; do not silently raise it during an
+  exam. The a8bf146 exam is reported incomplete as-is.

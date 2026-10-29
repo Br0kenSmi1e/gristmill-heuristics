@@ -44,8 +44,9 @@ pre-registered adoption rules, and win or lose on the axes below.
   failing candidate. (Convention added 2026-10-29, F-015.)
 - **Axis 1 — FLOP quality (gate).** `harness flops` of our schedule
   <= 1.05x the same-equation gristmill baseline's count, every corpus
-  problem. This is a REAL gate, not a freebie: it holds for the incumbent
-  engine by construction but constrains any challenger that displaces it.
+  problem. This is a REAL gate, not a freebie. The a8bf146 exam falsified
+  the earlier assumption that the incumbent was green by construction: all
+  six measured schedules failed (F-018). The gate remains unchanged.
 - **Axis 2 — same-backend decomposition (DIAGNOSTIC, not acceptance).**
   Same-equation baseline candidates run through OUR stack on tenferro
   (`harness time --candidate ...`). Not a spec axis (user decision:

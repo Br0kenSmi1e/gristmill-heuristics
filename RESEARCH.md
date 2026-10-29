@@ -19,10 +19,11 @@ PROTOCOL.md. What is broken: FAILURES.md. What we might try: IDEAS.md.
   with calibrated rates; per-op ranking rho ~ 0.93 on ccd/ccsd. This model
   is the compiler's heart — and F-004 is its known hole.
 - **Wall-time-priced selection is a real lever** (FLOP-greedy selection on
-  the same rewrite space loses or stalls). Confirmed same-equation losses
-  remain on ADC2/EOM t1 (F-007); the old six-problem geomean and MP3/CCSD
-  wins are retracted because they used sub-protocol timings, and MP3 also
-  fails the oracle (F-012/F-013).
+  the same rewrite space loses or stalls), but the valid a8bf146 exam gives
+  six-problem geomean 0.902x t1 / 0.883x t16 vs same-equation gristmill.
+  All 12 mixed per-cell results, including CCSD/lambda thread inversions,
+  are reported in F-007; Axis 1 is red on all six (F-018). CCSD(T) timing
+  is blocked by F-017's 6 GB harness cap.
 - **Composition of levers**: factorization (gristmill kernel) and layout
   are complementary; both are needed.
 - **Memory is a feasibility constraint**, not just performance (naive EOM
@@ -36,13 +37,17 @@ PROTOCOL.md. What is broken: FAILURES.md. What we might try: IDEAS.md.
 
 ## Open questions (ordered)
 
-1. F-008 / F-005: replace lossy definition chunking with budgeted kernel
+1. F-018: restore Axis 1; only ADC2 has a verified FLOP-gap mechanism, so
+   MP3/CCD/CCSD/lambda/EOM need per-schedule diagnosis before more selection.
+2. F-008 / F-005: replace lossy definition chunking with budgeted kernel
    enumeration that preserves cross-chunk factorization.
-2. F-007: ADC2 greedy-path failure is diagnosed, but I-005 two-move lookahead
-   is retired; EOM path mechanism and a new fix candidate remain open.
-3. F-004 / F-016: what functional form prices high-rank/strided GEMM and
-   closes the ADC2 aggregate-gap error? (M1 calibration grid decides)
-4. IDEAS.md I-001..I-004, in that order.
+3. F-007 / F-019: ADC2 greedy-path failure is diagnosed, I-005 is retired on
+   Axis 1; EOM and thread-inversion mechanisms remain open.
+4. F-017: make the CCSD(T) memory cap explicit and consistent with the 14 GB
+   machine envelope without weakening allocation safety.
+5. F-004 / F-016: price high-rank/strided GEMM and close the ADC2 gap error
+   (measured range 1.60–1.92x vs 1.14x predicted; M1).
+6. IDEAS.md I-001..I-004, in that order.
 
 ## Next investment
 

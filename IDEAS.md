@@ -16,7 +16,10 @@ Some compiler components are permanently open to challenge at tournaments:
   proposer, anything proposed later. Displacement rule: challenger must
   keep Axis 1 green (<=1.05x gristmill FLOPs on every corpus problem) AND
   beat the incumbent on Axis 2 numbers. The incumbent has no other
-  privilege — it is a component, not an identity.
+  privilege — it is a component, not an identity. The a8bf146 exam falsified
+  the assumption that the incumbent is Axis-1 green (F-018); restore that gate
+  before further displacement tournaments. I-001 and the structural proposer
+  are currently NOT EVALUABLE, not silently adopted or retired (F-025).
 
 ## I-001 ILP selection over enumerated intermediate candidates [proposed]
 - hypothesis: gristmill-greedy round-by-round selection leaves wall time on
@@ -88,10 +91,12 @@ Some compiler components are permanently open to challenge at tournaments:
   `H_BICLIQUE_MAX_TERMS=1000`, measured train A/B, and the ADC2 fixture.
   Valid CCSD model cost was 1.1425 s one-step vs 1.1809 s lookahead, but
   measured wall time favored lookahead 794.7 vs 737.3 ms (1.078x). CCD was
-  451.6 vs 452.8 ms (0.997x); train geomean 1.037x failed the required >1.05x
-  and Axis 1 remained red. ADC2 gave only 0.049% terminal model improvement
-  and did not meet wins-IF (one constituent was already accepted one-step).
-  Apparent gains on chunked controls were separately inadmissible (F-008).
+  451.6 vs 452.8 ms (0.997x); the TWO-problem geomean was 1.037x. MP3 and EOM
+  arms were not run, so the full train-geomean and EOM clauses are unevaluated
+  (F-020). Retirement is instead dispositive on Axis 1: challenger ratios were
+  1.265x CCD and 1.600x CCSD, above the required 1.05x. ADC2 gave only 0.049%
+  terminal model improvement and did not meet wins-IF. Apparent gains on
+  chunked controls were separately inadmissible (F-008).
 - origin / prior art: gristmill `optimize(..., contr_strat=ContrStrat.TRAV)`
   retains traversed contraction evaluations for subsequent sum optimization;
   local source inspected at gristmill/optimize.py:3025-3037 and public repo
