@@ -5,9 +5,13 @@
 Given the same tensor equations (truthmill Problem IR), produce **verified**
 standalone tenferro code with the best steady-state wall time we can
 measure. We do NOT compete on equation derivation (SeQuant/pdaggerq own
-that) and we do NOT try to beat gristmill's FLOP minimization head-on — we
-embed its rewrite kernel, so our FLOP floor is the incumbent's best by
-construction. Our contested ground: backend-aware scheduling (layout,
+that). gristmill appears in this spec ONLY as the tier-1 baseline we must
+beat — the strongest existing FLOP optimizer, imported on identical
+equations. What factorization engine sits inside our compiler is NOT a
+constitutional question: it is a contested slot (current incumbent: the
+gristmill-rewrites kernel, because it works and is verified; challengers:
+IDEAS.md entries), decided by tournaments on Axis 1/2 numbers like every
+other slot. Our contested ground: backend-aware scheduling (layout,
 permute, thread regime), verified correctness, memory safety, and symmetry
 storage. New algorithms are welcome — they enter through IDEAS.md with
 pre-registered adoption rules, and win or lose on the axes below.
@@ -26,8 +30,10 @@ pre-registered adoption rules, and win or lose on the axes below.
 - **Axis 0 — correctness (gate).** Every emitted schedule passes
   `harness check` (truthmill::verify + numerical oracle,
   symmetry-respecting inputs). 100% pass, no flag to disable.
-- **Axis 1 — FLOP parity (gate).** `harness flops` of our schedule <= 1.05x
-  the same-equation gristmill baseline's count, every corpus problem.
+- **Axis 1 — FLOP quality (gate).** `harness flops` of our schedule
+  <= 1.05x the same-equation gristmill baseline's count, every corpus
+  problem. This is a REAL gate, not a freebie: it holds for the incumbent
+  engine by construction but constrains any challenger that displaces it.
 - **Axis 2 — backend-controlled schedule quality.** Same-equation gristmill
   baseline (`tools/gristmill_baseline.py`) imported as a candidate and run
   through OUR layout+memory stack via `harness time --candidate ...` vs our

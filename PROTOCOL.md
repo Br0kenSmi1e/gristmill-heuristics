@@ -74,8 +74,9 @@ When fired, the milestone closes in order:
   IDEAS.md pricing (a cheap decisive test, not an implementation).
   Mandatory, so engineering pressure cannot crowd it out.
 - **Scope rule.** Building anything SPEC.md Layer 0 concedes (Wick
-  expansion, our own factorization kernel, a new backend) must first be
-  filed as an F-entry against the spec.
+  expansion; a new execution backend) must first be filed as an F-entry
+  against the spec. Note: building our own FACTORIZATION search is NOT
+  conceded — it is a contested slot (IDEAS.md), entered via tournaments.
 - **Stop rule.** Two consecutive milestones with zero new F-entries on the
   dev corpus => the failure tail is exhausted; run the exam, declare done
   or pivot. Do not manufacture work.

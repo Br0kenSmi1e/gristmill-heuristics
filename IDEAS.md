@@ -7,6 +7,17 @@ Status machine: proposed -> priced -> tested -> adopted | retired(evidence).
 Revival rule: any retired idea gets re-priced when the cost model major
 version changes (a idea retired under a wrong model may deserve a retrial).
 
+## Contested slots (standing)
+
+Some compiler components are permanently open to challenge at tournaments:
+
+- **Factorization engine.** Incumbent: gristmill-rewrites kernel (works,
+  verify-gated). Challengers: I-001 (ILP selection), the structural
+  proposer, anything proposed later. Displacement rule: challenger must
+  keep Axis 1 green (<=1.05x gristmill FLOPs on every corpus problem) AND
+  beat the incumbent on Axis 2 numbers. The incumbent has no other
+  privilege — it is a component, not an identity.
+
 ## I-001 ILP selection over enumerated intermediate candidates [proposed]
 - hypothesis: gristmill-greedy round-by-round selection leaves wall time on
   the table; exact selection (CP-SAT) over the same candidate space closes
