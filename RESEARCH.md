@@ -303,4 +303,16 @@ Measured quality (candidate + model layout, t1/t16 ms):
   measured spot-checks or a better slow-path model is required before
   trusting fast selection on new shapes.
 
+## CORRECTION (important)
+
+With gristmill run on the IDENTICAL equations (dump-comp -> gristmill ->
+export, verify-gated), the baselines are much stronger than the first
+imports, and the selector is at parity-to-behind: geomean 0.90x t1 over six
+problems (mp3 1.09x, ccd 1.00x, ccsd 0.95x, lambda 1.01x, eom 0.77x, adc2
+0.67x). The earlier "beats gristmill by 1.42x on CCSD" was a baseline
+artifact (different derivation path -> worse gristmill local optimum). All
+candidate comparisons must use same-equation baselines from
+tools/gristmill_baseline.py. Next HL iteration: per-op diff of eom/adc2
+schedules vs gristmill's to find the moves our space/policy misses.
+
 ## Superseded earlier notes (kept for audit)

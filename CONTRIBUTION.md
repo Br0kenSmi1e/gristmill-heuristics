@@ -2,15 +2,23 @@
 
 ## Central claim
 
-**Headline (baseline = gristmill, the state-of-the-art FLOP optimizer, with
-our layout layer available to both sides):** a heuristic-learning selector
-over the gristmill-rewrites kernel -- same rewrite space, but candidates
-priced by a white-box wall-time model instead of greedy FLOP savings --
-produces schedules that beat gristmill's own output on this backend:
-**CCD 434 vs 449 ms, CCSD 736 vs 1043 ms (1.42x) single-thread; CCSD 263 vs
-363 ms (1.38x) at 16 threads** (clean machine, interleaved best-of-N).
-Selection is greedy, ~30 s per problem, every step exactly verified
-(kernel transition + truthmill::verify + numerical oracle).
+**Corrected headline (baseline = gristmill run on the IDENTICAL equations,
+exported from the same truthmill references; both sides get our layout
+layer):** the HL selector is currently at rough PARITY with gristmill --
+geomean 0.90x across six problems (wins: mp3 1.09x/1.18x, ccsd t16 1.09x;
+parity: ccd, ccsd_lambda t1; losses: eom_ccsd 0.77x, adc2 0.67x t1). An
+earlier version of this document claimed a 1.42x CCSD win; that was an
+artifact of a weaker first baseline (equations re-derived through a
+different drudge path that led gristmill to a worse local optimum). The
+correction was produced by the pipeline's own verification-and-timing
+machinery.
+
+What the infrastructure did establish: verified, memory-safe, wall-time
+measured scheduling from truthmill IR to tenferro, with a fast structural
+proposer (100-1000x faster search, reaches CCSD(T) where kernel enumeration
+hangs) -- and a trials record that caught and localized its own failures
+(kernel enumeration blowup, flops-greedy memory bombs, a 20x model
+mispricing on rank-6 ops, and now the selector gap on eom/adc2).
 
 Supporting evidence for *why* the selector matters: a FLOP-greedy replica of
 gristmill's selection policy on the same kernel either stalls after one

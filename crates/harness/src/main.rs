@@ -138,6 +138,13 @@ enum Cmd {
         #[arg(long, default_value = "none")]
         layout: String,
     },
+    /// Dump the expanded rewrites-Computation JSON for a problem.
+    DumpComp {
+        problem: PathBuf,
+        /// Only split definitions larger than this many terms (0 = never).
+        #[arg(long, default_value = "0")]
+        split_above: usize,
+    },
     /// Probe: time kernel query() per definition, no selector logic.
     QueryProbe {
         problem: PathBuf,
@@ -582,6 +589,17 @@ fn main() -> Result<()> {
             let sum_p: f64 = rows.iter().map(|r| r.0).sum();
             let sum_m: f64 = rows.iter().map(|r| r.1).sum();
             println!("total measured {sum_m:.1} ms, predicted {sum_p:.1} ms");
+        }
+        Cmd::DumpComp { problem, split_above } => {
+            let problem = load_problem(&problem, &None)?;
+            let (mut computation, _outputs) = bridge::problem_to_computation(&problem, 1000);
+            if split_above > 0 {
+                bridge::split_large_definitions(&mut computation, split_above);
+            }
+            println!(
+                "{}",
+                serde_json::to_string(&computation).map_err(anyhow::Error::msg)?
+            );
         }
         Cmd::QueryProbe { problem } => {
             let problem = load_problem(&problem, &None)?;
