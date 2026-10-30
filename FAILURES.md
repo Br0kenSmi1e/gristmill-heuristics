@@ -86,7 +86,7 @@ study (archive/RESEARCH-v1.md, tag `hl-study-final`).
   controls; I-001 remains untested because the diff did not measure the
   candidate conflicts required by its wins-IF condition.
 
-## F-008 unconditional definition chunking destroys cross-chunk factorization [OPEN — CCD mechanism verified]
+## F-008 unconditional definition chunking destroys cross-chunk factorization [CLOSED — split threshold aligned with kernel envelope]
 - symptom: the current default one-step selector no longer reproduces the
   archived CCD candidate and leaves near-reference FLOP counts. No CCSD
   chunking claim is made: its unsplit default-guard control was invalid
@@ -102,11 +102,13 @@ study (archive/RESEARCH-v1.md, tag `hl-study-final`).
 - exposing fixture: `harness select benches/chemistry/ccd.json --sizes
   0=16,1=64 --threads 1 --split-above 0`; compare with default chunking and
   `benches/candidates/ccd_selected.json` from commit 967e26a.
-- planned fix: replace unconditional chunking with the budgeted enumeration
-  and structural fallback in F-005; term count alone does not predict the
-  ccsd_t explosion, so simply disabling chunking is not a general fix.
-- regression: CCD selected-program FLOPs and predicted time no worse than
-  the unsplit control; numerical oracle on emitted candidates.
+- fix: the default split threshold is now 20, matching the default kernel
+  skip envelope. CCD's 18-term definition is no longer chunked. Larger defs
+  remain an F-005 problem; this is not a general enumeration-budget fix.
+- regression: default CCD selection reproduces the unsplit nine-step trace
+  and 0.7822403455 s terminal prediction; final emission uses the F-018
+  baseline fallback because that schedule still exceeds Axis 1. Permanent
+  default-threshold unit test + numerical oracle on the emitted baseline.
 
 ## F-009 MP3 selected schedule fails the numerical oracle [CLOSED]
 - symptom: protected milestone Axis 0 stopped on `mp3_selected`: exact

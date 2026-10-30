@@ -179,7 +179,7 @@ enum Cmd {
         #[arg(long)]
         lookahead: bool,
         /// Split definitions above this many terms (0 disables splitting).
-        #[arg(long, default_value = "12")]
+        #[arg(long, default_value = "20")]
         split_above: usize,
         /// Same-equation gristmill baseline used as the Axis-1 cap/fallback.
         /// Defaults to ../candidates/<problem>_gristmill.json.
@@ -1349,6 +1349,15 @@ fn enforce_flop_cap(
 #[cfg(test)]
 mod axis1_tests {
     use super::*;
+
+    #[test]
+    fn selector_split_matches_default_kernel_envelope() {
+        let cli = Cli::try_parse_from(["harness", "select", "problem.json"]).unwrap();
+        match cli.cmd {
+            Cmd::Select { split_above, .. } => assert_eq!(split_above, 20),
+            _ => panic!("expected select command"),
+        }
+    }
 
     #[test]
     fn over_cap_mp3_schedule_falls_back_to_baseline() {

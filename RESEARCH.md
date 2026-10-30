@@ -38,8 +38,9 @@ PROTOCOL.md. What is broken: FAILURES.md. What we might try: IDEAS.md.
 
 ## Open questions (ordered)
 
-1. F-008 / F-005: replace lossy definition chunking with budgeted kernel
-   enumeration that preserves cross-chunk factorization.
+1. F-005: budget enumeration for definitions above the 20-term kernel
+   envelope. F-008 is fixed for CCD by aligning split/skip thresholds, but
+   CCSD's 63-term definition still needs a quality-preserving fallback.
 2. F-007 / F-019: ADC2 greedy-path failure is diagnosed, I-005 is retired on
    Axis 1; EOM and thread-inversion mechanisms remain open.
 3. F-017: CCSD(T) execution is a HARD RESOURCE BLOCKER. Backend allocations
