@@ -38,9 +38,10 @@ PROTOCOL.md. What is broken: FAILURES.md. What we might try: IDEAS.md.
 
 ## Open questions (ordered)
 
-1. F-005: budget enumeration for definitions above the 20-term kernel
-   envelope. F-008 is fixed for CCD by aligning split/skip thresholds, but
-   CCSD's 63-term definition still needs a quality-preserving fallback.
+1. F-005 / I-006: budget kernel enumeration for definitions above the
+   20-term envelope. F-008 fixed CCD; CCSD's 63-term structural fallback
+   failed both wall-model acceptance and FLOP-mode exact equivalence, so the
+   budget must be inside the kernel.
 2. F-007 / F-019: ADC2 greedy-path failure is diagnosed, I-005 is retired on
    Axis 1; EOM and thread-inversion mechanisms remain open.
 3. F-017: CCSD(T) execution is a HARD RESOURCE BLOCKER. Backend allocations

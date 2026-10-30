@@ -171,8 +171,8 @@ enum Cmd {
         /// replicates gristmill's selection policy on the same kernel spaces)
         #[arg(long, default_value = "model")]
         score: String,
-        /// Engine: kernel (enumerate kernel spaces) | structural (direct
-        /// signature-based proposals, verify only fired steps)
+        /// Engine: kernel | structural | hybrid (structural for defs >20,
+        /// then kernel for the remainder; verify structural steps)
         #[arg(long, default_value = "kernel")]
         engine: String,
         /// Experimental bounded parenthesize-then-action lookahead (I-005).
@@ -862,7 +862,7 @@ let t0 = std::time::Instant::now();
                 .map(|t| t.0)
                 .collect();
             let (mut computation, outputs) = bridge::problem_to_computation(&problem, 1000);
-            if split_above > 0 {
+            if split_above > 0 && engine != "hybrid" {
                 bridge::split_large_definitions(&mut computation, split_above);
             }
             let output_ids: Vec<u32> = outputs.iter().map(|t| t.0).collect();
@@ -898,6 +898,15 @@ let t0 = std::time::Instant::now();
                     &problem, &name, &input_ids, &output_ids, &outputs, &rates,
                     threads, max_steps, accept, out, &baseline_program, flop_cap_log,
                 );
+            }
+            if engine == "hybrid" {
+                computation = optimize_large_definitions(
+                    &computation,
+                    &outputs,
+                    &score,
+                    max_steps,
+                    accept,
+                )?;
             }
             let mut state = State::new(computation, outputs.clone())
                 .map_err(|e| anyhow::anyhow!("state: {e:?}"))?;
@@ -1158,6 +1167,8 @@ let t0 = std::time::Instant::now();
                 &input_ids,
                 &output_ids,
             );
+            let search_log_flops = truthmill::log_flops(&problem, &prog)
+                .map_err(|e| anyhow::anyhow!("search flops: {e:?}"))?;
             let (prog, log_flops, flop_fallback) = enforce_flop_cap(
                 &problem,
                 prog,
@@ -1180,11 +1191,13 @@ let t0 = std::time::Instant::now();
             let record = serde_json::json!({
                 "kind": "select",
                 "score": score_mode,
+                "engine": engine,
                 "problem": name,
                 "sizes": sizes_map(&problem),
                 "threads": threads,
                 "predicted_s": if flop_fallback { None } else { Some(cur) },
                 "log10_flops": log_flops / std::f64::consts::LN_10,
+                "search_log10_flops": search_log_flops / std::f64::consts::LN_10,
                 "flop_cap_log10": flop_cap_log / std::f64::consts::LN_10,
                 "flop_fallback": flop_fallback,
                 "baseline": baseline_path.display().to_string(),
@@ -1517,6 +1530,59 @@ fn sizes_map(problem: &Problem) -> BTreeMap<u32, u64> {
         .iter()
         .map(|(d, s)| (d.0, *s))
         .collect()
+}
+
+fn optimize_large_definitions(
+    computation: &gristmill_rewrites::repr::Computation,
+    outputs: &[gristmill_rewrites::repr::TensorId],
+    score: &dyn Fn(&gristmill_rewrites::repr::Computation) -> f64,
+    max_steps: usize,
+    accept: f64,
+) -> Result<gristmill_rewrites::repr::Computation> {
+    use gristmill_rewrites::state::State;
+    use gristmill_rewrites::verify::equivalent_states;
+
+    let mut comp = computation.clone();
+    let mut state = State::new(comp.clone(), outputs.to_vec())
+        .map_err(|e| anyhow::anyhow!("hybrid state: {e:?}"))?;
+    let mut cur = score(&comp);
+    for step in 0..max_steps {
+        let proposals = propose::propose_above(&comp, 21);
+        let mut best: Option<(f64, usize)> = None;
+        for (pi, proposal) in proposals.iter().enumerate() {
+            let comp2 = propose::apply_proposal(&comp, proposal);
+            let c = score(&comp2);
+            let better = match &best {
+                None => true,
+                Some((b, _)) => c < *b,
+            };
+            if better {
+                best = Some((c, pi));
+            }
+        }
+        match best {
+            Some((c, pi)) if c < cur * (1.0 - accept) => {
+                let comp2 = propose::apply_proposal(&comp, &proposals[pi]);
+                let state2 = State::new(comp2.clone(), outputs.to_vec())
+                    .map_err(|e| anyhow::anyhow!("hybrid state: {e:?}"))?;
+                let equiv = equivalent_states(&state, &state2)
+                    .map_err(|e| anyhow::anyhow!("hybrid verify: {e:?}"))?;
+                if !equiv {
+                    eprintln!("[hybrid] step {step}: structural proposal failed equivalence");
+                    break;
+                }
+                eprintln!(
+                    "[hybrid] step {step}: group{} free{:?} {cur:.4} -> {c:.4} s",
+                    proposals[pi].group_size, proposals[pi].free_domains
+                );
+                comp = comp2;
+                state = state2;
+                cur = c;
+            }
+            _ => break,
+        }
+    }
+    Ok(comp)
 }
 
 #[allow(clippy::too_many_arguments)]

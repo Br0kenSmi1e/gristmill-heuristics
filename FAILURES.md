@@ -40,9 +40,14 @@ study (archive/RESEARCH-v1.md, tag `hl-study-final`).
 ## F-005 kernel biclique enumeration explodes on large defs [OPEN]
 - symptom: ccsd_t def0 query >400 s (kernel enumerates ALL maximal
   bicliques, no budget); selector skips defs >20 terms
-- planned fix (M2): enumeration cutoff (greedy_cutoff analogue) + fallback
-  to the structural proposer for large defs
-- exposing case: ccsd_t via `harness search` (kernel path)
+- planned fix (M2): enumeration cutoff (greedy_cutoff analogue); see I-006.
+  The current structural proposer is NOT a sufficient fallback: on CCSD's
+  63-term train definition, wall-model hybrid accepted zero moves and left
+  log10 FLOPs 13.875 (split kernel 12.913); FLOP-priced hybrid's best proposal
+  failed exact equivalence. No CCSD(T) execution was performed.
+- fix candidates: I-006 (bounded kernel enumeration).
+- exposing case: ccsd_t via `harness search` (kernel path); CCSD 63-term def
+  is the safe train proxy for fallback experiments.
 
 ## F-006 benchmark contamination by concurrent load [OPEN — structural fix pending]
 - symptom: M3-era batches measured under load avg 24 (~20 julia jobs);

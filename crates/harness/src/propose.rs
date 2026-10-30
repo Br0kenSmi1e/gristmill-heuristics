@@ -164,8 +164,16 @@ pub struct Proposal {
 
 /// Group all pair occurrences by structural signature.
 pub fn propose(comp: &Computation) -> Vec<Proposal> {
+    propose_above(comp, 0)
+}
+
+/// As `propose`, restricted to definitions with at least `min_terms` terms.
+pub fn propose_above(comp: &Computation, min_terms: usize) -> Vec<Proposal> {
     let mut groups: BTreeMap<PairSig, Vec<PairOcc>> = BTreeMap::new();
     for (d, def) in comp.definitions.iter().enumerate() {
+        if def.rhs.len() < min_terms {
+            continue;
+        }
         for (t, term) in def.rhs.iter().enumerate() {
             let nf = term.factors.len();
             for fa in 0..nf {

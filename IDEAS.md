@@ -98,6 +98,22 @@ Some compiler components are permanently open to challenge at tournaments:
   1.265x CCD and 1.600x CCSD, above the required 1.05x. ADC2 gave only 0.049%
   terminal model improvement and did not meet wins-IF. Apparent gains on
   chunked controls were separately inadmissible (F-008).
+
+## I-006 budgeted maximal-biclique enumeration [proposed]
+- hypothesis: a gristmill `greedy_cutoff`-style depth budget inside the
+  gristmill-rewrites Bron–Kerbosch enumeration retains the profitable
+  bicliques while avoiding the F-005 exponential query tail.
+- wins IF: bounded queries preserve >=99% of full-query FLOP savings on
+  train definitions whose full queries complete, while large train defs
+  finish within a 10 s/query hard budget.
+- cheapest test: add an upstream enumeration-budget API and compare bounded
+  vs full candidate sets on {ccd, ccsd}; do not execute ccsd_t. Evaluate its
+  static query/candidate count only at a later resource-safe milestone.
+- adopt IF: Axis 1 stays green, no train schedule regresses >1% under the
+  time objective, every bounded query meets its budget, and end-to-end
+  compile time is <10x the split-kernel control. Otherwise retire with numbers.
+- addresses: F-005; follows the verified failure of the structural fallback
+  recorded there.
 - origin / prior art: gristmill `optimize(..., contr_strat=ContrStrat.TRAV)`
   retains traversed contraction evaluations for subsequent sum optimization;
   local source inspected at gristmill/optimize.py:3025-3037 and public repo
