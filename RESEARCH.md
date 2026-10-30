@@ -22,8 +22,9 @@ PROTOCOL.md. What is broken: FAILURES.md. What we might try: IDEAS.md.
   the same rewrite space loses or stalls), but the valid a8bf146 exam gives
   six-problem geomean 0.902x t1 / 0.883x t16 vs same-equation gristmill.
   All 12 mixed per-cell results, including CCSD/lambda thread inversions,
-  are reported in F-007; Axis 1 is red on all six (F-018). CCSD(T) timing
-  is blocked by F-017's 6 GB harness cap.
+  are reported in F-007. That exam's Axis-1 red led to a mandatory emission
+  cap with verified-baseline fallback (F-018); search-quality losses remain
+  open. CCSD(T) timing is blocked by F-017's 6 GB harness cap.
 - **Composition of levers**: factorization (gristmill kernel) and layout
   are complementary; both are needed.
 - **Memory is a feasibility constraint**, not just performance (naive EOM
@@ -37,17 +38,15 @@ PROTOCOL.md. What is broken: FAILURES.md. What we might try: IDEAS.md.
 
 ## Open questions (ordered)
 
-1. F-018: restore Axis 1; only ADC2 has a verified FLOP-gap mechanism, so
-   MP3/CCD/CCSD/lambda/EOM need per-schedule diagnosis before more selection.
-2. F-008 / F-005: replace lossy definition chunking with budgeted kernel
+1. F-008 / F-005: replace lossy definition chunking with budgeted kernel
    enumeration that preserves cross-chunk factorization.
-3. F-007 / F-019: ADC2 greedy-path failure is diagnosed, I-005 is retired on
+2. F-007 / F-019: ADC2 greedy-path failure is diagnosed, I-005 is retired on
    Axis 1; EOM and thread-inversion mechanisms remain open.
-4. F-017: make the CCSD(T) memory cap explicit and consistent with the 14 GB
+3. F-017: make the CCSD(T) memory cap explicit and consistent with the 14 GB
    machine envelope without weakening allocation safety.
-5. F-004 / F-016: price high-rank/strided GEMM and close the ADC2 gap error
+4. F-004 / F-016: price high-rank/strided GEMM and close the ADC2 gap error
    (measured range 1.60–1.92x vs 1.14x predicted; M1).
-6. IDEAS.md I-001..I-004, in that order.
+5. IDEAS.md I-001..I-004, in that order.
 
 ## Next investment
 

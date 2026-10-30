@@ -233,7 +233,7 @@ study (archive/RESEARCH-v1.md, tag `hl-study-final`).
 
 ## Critic challenges (milestone after the a8bf146 protected exam; filed by fresh-context critic, milestone stays OPEN until each is fixed or rebutted with evidence)
 
-## F-018 Axis-1 gate fails on all six measured problems — including the entire train corpus — and no F-entry owns the gate failure [OPEN — gate owner recorded, mechanisms unverified]
+## F-018 Axis-1 gate fails on all six measured problems — including the entire train corpus — and no F-entry owns the gate failure [CLOSED — emission cap and baseline fallback]
 - symptom: trials/exam-a8bf146.jsonl records axis1_pass=false, failures=6,
   FLOP ratios from 1.2581x (ccd) to 1397.5622x (ccsd_lambda). The train
   corpus fails too: mp3 1.6247x, ccd 1.2581x, ccsd 3.9981x. SPEC Axis 1:
@@ -260,6 +260,15 @@ study (archive/RESEARCH-v1.md, tag `hl-study-final`).
   selector configurations are unknown, so I-005 and exam FLOP ratios are not
   asserted to describe identical schedules. Structured run records now pin
   every timed candidate by SHA-256.
+- mechanism / fix: VERIFIED that selector acceptance priced only wall time and
+  never checked Axis 1. MP3 demonstrates the tradeoff: 1.625x FLOPs but 1.105x
+  measured speedup. `harness select` now loads a verified same-equation
+  baseline, enforces <=1.05x FLOPs at final emission for kernel AND structural
+  engines, and falls back to that baseline when search misses the cap. This is
+  a feasibility fix, not a search-quality claim; F-007/F-019 remain open.
+- regression: `axis1_tests::over_cap_mp3_schedule_falls_back_to_baseline`;
+  zero-step searches on all seven problems emit JSON-equivalent baselines and
+  pass the numerical oracle.
 
 ## F-019 F-007's symptom selectively characterizes the exam: unremarked losses and unexplained t1/t16 inversions [CLOSED — complete results reported, inversions owned]
 - symptom: F-007 names losses "ADC2 0.626x t1, EOM 0.794x t1, CCSD-lambda

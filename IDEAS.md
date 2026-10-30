@@ -17,8 +17,9 @@ Some compiler components are permanently open to challenge at tournaments:
   keep Axis 1 green (<=1.05x gristmill FLOPs on every corpus problem) AND
   beat the incumbent on Axis 2 numbers. The incumbent has no other
   privilege — it is a component, not an identity. The a8bf146 exam falsified
-  the assumption that the incumbent is Axis-1 green (F-018); restore that gate
-  before further displacement tournaments. I-001 and the structural proposer
+  the assumption that the incumbent is Axis-1 green. Emission is now capped
+  with baseline fallback (F-018); further displacement still requires a green
+  exam. I-001 and the structural proposer
   are currently NOT EVALUABLE, not silently adopted or retired (F-025).
 
 ## I-001 ILP selection over enumerated intermediate candidates [proposed]

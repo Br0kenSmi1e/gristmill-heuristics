@@ -46,7 +46,8 @@ pre-registered adoption rules, and win or lose on the axes below.
   <= 1.05x the same-equation gristmill baseline's count, every corpus
   problem. This is a REAL gate, not a freebie. The a8bf146 exam falsified
   the earlier assumption that the incumbent was green by construction: all
-  six measured schedules failed (F-018). The gate remains unchanged.
+  six measured schedules failed. The gate remains unchanged and is now
+  enforced at selector emission with verified-baseline fallback (F-018).
 - **Axis 2 — same-backend decomposition (DIAGNOSTIC, not acceptance).**
   Same-equation baseline candidates run through OUR stack on tenferro
   (`harness time --candidate ...`). Not a spec axis (user decision:

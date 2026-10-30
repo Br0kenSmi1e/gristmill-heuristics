@@ -181,6 +181,10 @@ enum Cmd {
         /// Split definitions above this many terms (0 disables splitting).
         #[arg(long, default_value = "12")]
         split_above: usize,
+        /// Same-equation gristmill baseline used as the Axis-1 cap/fallback.
+        /// Defaults to ../candidates/<problem>_gristmill.json.
+        #[arg(long)]
+        baseline: Option<PathBuf>,
     },
     /// Per-op timing profile of one program execution (prepared plans).
     Profile {
@@ -833,9 +837,26 @@ let t0 = std::time::Instant::now();
             engine,
             lookahead,
             split_above,
+            baseline,
         } => {
             let name = stem(&problem);
+            let baseline_path = baseline.unwrap_or_else(|| {
+                problem
+                    .parent()
+                    .unwrap()
+                    .join("../candidates")
+                    .join(format!("{name}_gristmill.json"))
+            });
             let problem = load_problem(&problem, &sizes)?;
+            let baseline_program = load_program(
+                &problem,
+                "none",
+                256,
+                Some(baseline_path.clone()),
+            )?;
+            let baseline_log_flops = truthmill::log_flops(&problem, &baseline_program)
+                .map_err(|e| anyhow::anyhow!("baseline flops: {e:?}"))?;
+            let flop_cap_log = baseline_log_flops + 1.05f64.ln();
             let input_ids: Vec<u32> = dense::collect_patterns(&problem)
                 .keys()
                 .map(|t| t.0)
@@ -875,7 +896,7 @@ let t0 = std::time::Instant::now();
             if engine == "structural" {
                 return run_structural(
                     &problem, &name, &input_ids, &output_ids, &outputs, &rates,
-                    threads, max_steps, accept, out,
+                    threads, max_steps, accept, out, &baseline_program, flop_cap_log,
                 );
             }
             let mut state = State::new(computation, outputs.clone())
@@ -1137,6 +1158,15 @@ let t0 = std::time::Instant::now();
                 &input_ids,
                 &output_ids,
             );
+            let (prog, log_flops, flop_fallback) = enforce_flop_cap(
+                &problem,
+                prog,
+                &baseline_program,
+                flop_cap_log,
+            )?;
+            if flop_fallback {
+                eprintln!("[select] Axis-1 cap missed; using verified baseline fallback");
+            }
             let ok = truthmill::verify(&problem, &prog)
                 .map_err(|e| anyhow::anyhow!("verify error: {e:?}"))?;
             eprintln!("[select] truthmill::verify(final): {ok}");
@@ -1153,7 +1183,11 @@ let t0 = std::time::Instant::now();
                 "problem": name,
                 "sizes": sizes_map(&problem),
                 "threads": threads,
-                "predicted_s": cur,
+                "predicted_s": if flop_fallback { None } else { Some(cur) },
+                "log10_flops": log_flops / std::f64::consts::LN_10,
+                "flop_cap_log10": flop_cap_log / std::f64::consts::LN_10,
+                "flop_fallback": flop_fallback,
+                "baseline": baseline_path.display().to_string(),
                 "trace": trace,
             });
             println!("{}", serde_json::to_string(&record)?);
@@ -1292,6 +1326,59 @@ fn apply_layout_with(
             ))
         }
         other => anyhow::bail!("unknown layout: {other}"),
+    }
+}
+
+fn enforce_flop_cap(
+    problem: &Problem,
+    program: truthmill::Program,
+    baseline: &truthmill::Program,
+    cap_log: f64,
+) -> Result<(truthmill::Program, f64, bool)> {
+    let log_flops = truthmill::log_flops(problem, &program)
+        .map_err(|e| anyhow::anyhow!("candidate flops: {e:?}"))?;
+    if log_flops <= cap_log + 1e-10 {
+        return Ok((program, log_flops, false));
+    }
+    let baseline_log = truthmill::log_flops(problem, baseline)
+        .map_err(|e| anyhow::anyhow!("baseline flops: {e:?}"))?;
+    anyhow::ensure!(baseline_log <= cap_log + 1e-10, "baseline exceeds its own cap");
+    Ok((baseline.clone(), baseline_log, true))
+}
+
+#[cfg(test)]
+mod axis1_tests {
+    use super::*;
+
+    #[test]
+    fn over_cap_mp3_schedule_falls_back_to_baseline() {
+        let mut problem = Problem::from_json(include_str!(
+            "../../../benches/chemistry/mp3.json"
+        ))
+        .unwrap();
+        problem.sizes.insert(DomainId(0), 16);
+        problem.sizes.insert(DomainId(1), 64);
+        let selected: truthmill::Program = serde_json::from_str(include_str!(
+            "../../../benches/candidates/mp3_selected.json"
+        ))
+        .unwrap();
+        let baseline: truthmill::Program = serde_json::from_str(include_str!(
+            "../../../benches/candidates/mp3_gristmill.json"
+        ))
+        .unwrap();
+        let baseline_log = truthmill::log_flops(&problem, &baseline).unwrap();
+        let cap = baseline_log + 1.05f64.ln();
+        let selected_log = truthmill::log_flops(&problem, &selected).unwrap();
+        assert!(selected_log > cap);
+        let (fallback, fallback_log, fell_back) =
+            enforce_flop_cap(&problem, selected, &baseline, cap).unwrap();
+        assert!(fell_back);
+        assert_eq!(fallback, baseline);
+        assert!(fallback_log <= cap);
+        let (_, baseline_log, fell_back) =
+            enforce_flop_cap(&problem, baseline.clone(), &baseline, cap).unwrap();
+        assert!(!fell_back);
+        assert!(baseline_log <= cap);
     }
 }
 
@@ -1435,6 +1522,8 @@ fn run_structural(
     max_steps: usize,
     accept: f64,
     out: Option<PathBuf>,
+    baseline: &truthmill::Program,
+    flop_cap_log: f64,
 ) -> Result<()> {
     use gristmill_rewrites::state::State;
     use gristmill_rewrites::verify::equivalent_states;
@@ -1537,6 +1626,11 @@ fn run_structural(
         }
     }
     let prog = bridge::computation_to_program(&comp, input_ids, output_ids);
+    let (prog, log_flops, flop_fallback) =
+        enforce_flop_cap(problem, prog, baseline, flop_cap_log)?;
+    if flop_fallback {
+        eprintln!("[structural] Axis-1 cap missed; using verified baseline fallback");
+    }
     if std::env::var("H_DEBUG").is_ok() {
         std::fs::write("/tmp/dbg_program.json", serde_json::to_string_pretty(&prog)?)?;
     }
@@ -1552,7 +1646,10 @@ fn run_structural(
     let record = serde_json::json!({
         "kind": "select", "engine": "structural", "problem": name,
         "sizes": sizes_map(problem), "threads": threads,
-        "predicted_s": cur,
+        "predicted_s": if flop_fallback { None } else { Some(cur) },
+        "log10_flops": log_flops / std::f64::consts::LN_10,
+        "flop_cap_log10": flop_cap_log / std::f64::consts::LN_10,
+        "flop_fallback": flop_fallback,
         "search_wall_s": t_start.elapsed().as_secs_f64(),
         "trace": trace,
     });
