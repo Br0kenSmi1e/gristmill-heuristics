@@ -416,6 +416,13 @@ study (archive/RESEARCH-v1.md, tag `hl-study-final`).
 - exposing fixture: `harness time benches/chemistry/ccsd_t.json --sizes
   0=8,1=32 --threads 1 --candidate benches/candidates/ccsd_t_gristmill.json
   --layout model` with default `--max-mem-mb`.
-- planned fix: make the exam memory cap an explicit SPEC-consistent setting,
-  with actual allocation safety retained; do not silently raise it during an
-  exam. The a8bf146 exam is reported incomplete as-is.
+- resource blocker (2026-10-30): conservative probes beyond the 6 GB guard
+  attempted additional 4 GiB backend allocations and aborted at ~9 GB RSS;
+  swap filled (~4 GB), and a later factmem probe was terminated. Raising the
+  address-space cap did not make the baseline viable. All limit-raising and
+  CCSD(T) execution experiments were reverted; do NOT rerun full-size CCSD(T)
+  on this machine. The a8bf146 exam remains incomplete as-is.
+- planned fix: memory-safe schedule/transform development only on tiny
+  fixtures with a hard allocation budget, followed by static estimation.
+  No further full CCSD(T) execution until a schedule is statically shown to
+  fit well below the existing 6 GB guard.

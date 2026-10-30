@@ -42,8 +42,9 @@ PROTOCOL.md. What is broken: FAILURES.md. What we might try: IDEAS.md.
    enumeration that preserves cross-chunk factorization.
 2. F-007 / F-019: ADC2 greedy-path failure is diagnosed, I-005 is retired on
    Axis 1; EOM and thread-inversion mechanisms remain open.
-3. F-017: make the CCSD(T) memory cap explicit and consistent with the 14 GB
-   machine envelope without weakening allocation safety.
+3. F-017: CCSD(T) execution is a HARD RESOURCE BLOCKER. Backend allocations
+   exceeded physical memory and filled swap; no full-size reruns. Develop
+   memory-safe schedules only on tiny fixtures until static peak is <6 GB.
 4. F-004 / F-016: price high-rank/strided GEMM and close the ADC2 gap error
    (measured range 1.60–1.92x vs 1.14x predicted; M1).
 5. IDEAS.md I-001..I-004, in that order.
