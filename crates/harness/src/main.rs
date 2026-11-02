@@ -64,6 +64,13 @@ enum Cmd {
         warmup: usize,
         #[arg(long, default_value = "0")]
         seed: u64,
+        /// Refuse to time when the 1-min load average exceeds this
+        /// (default: half of available CPUs; the F-006 guard).
+        #[arg(long)]
+        max_load: Option<f64>,
+        /// Time anyway under load; the override is recorded in the output.
+        #[arg(long)]
+        allow_loaded: bool,
         /// Program transform to apply before evaluation: none|greedy
         #[arg(long, default_value = "none")]
         transform: String,
@@ -102,6 +109,13 @@ enum Cmd {
         threads: usize,
         #[arg(long, default_value = "0")]
         seed: u64,
+        /// Refuse measured acceptance when the 1-min load average exceeds
+        /// this (default: half of available CPUs; the F-006 guard).
+        #[arg(long)]
+        max_load: Option<f64>,
+        /// Search anyway under load; the override is recorded in the output.
+        #[arg(long)]
+        allow_loaded: bool,
         /// Max accepted intermediates.
         #[arg(long, default_value = "30")]
         budget: usize,
@@ -133,6 +147,13 @@ enum Cmd {
         iters: usize,
         #[arg(long, default_value = "0")]
         seed: u64,
+        /// Refuse to measure when the 1-min load average exceeds this
+        /// (default: half of available CPUs; the F-006 guard).
+        #[arg(long)]
+        max_load: Option<f64>,
+        /// Measure anyway under load; the override is recorded in the output.
+        #[arg(long)]
+        allow_loaded: bool,
         #[arg(long, default_value = "none")]
         transform: String,
         /// External candidate Program JSON; skips transform
@@ -197,6 +218,13 @@ enum Cmd {
         iters: usize,
         #[arg(long, default_value = "0")]
         seed: u64,
+        /// Refuse to profile when the 1-min load average exceeds this
+        /// (default: half of available CPUs; the F-006 guard).
+        #[arg(long)]
+        max_load: Option<f64>,
+        /// Profile anyway under load; the override is recorded in the output.
+        #[arg(long)]
+        allow_loaded: bool,
         #[arg(long, default_value = "none")]
         transform: String,
         /// External candidate Program JSON; skips transform
@@ -220,6 +248,14 @@ enum Cmd {
         warmup: usize,
         #[arg(long, default_value = "0")]
         seed: u64,
+        /// Refuse to time when the 1-min load average exceeds this
+        /// (default: half of available CPUs; the F-006 guard).
+        #[arg(long)]
+        max_load: Option<f64>,
+        /// Time anyway under load; the override is recorded in the output
+        /// and in any stored anchor.
+        #[arg(long)]
+        allow_loaded: bool,
         #[arg(long, default_value = "none")]
         transform: String,
         /// External candidate Program JSON; skips transform
@@ -515,6 +551,8 @@ fn main() -> Result<()> {
             iters,
             warmup,
             seed,
+            max_load,
+            allow_loaded,
             transform,
             layout,
             cold,
@@ -525,6 +563,7 @@ fn main() -> Result<()> {
             factmem_threshold_mb,
             candidate,
         } => {
+            let load = load_guard(max_load, allow_loaded)?;
             let name = stem(&problem);
             let problem = load_problem(&problem, &sizes)?;
             let input_mb = dense::estimate_input_bytes(&problem) / (1 << 20);
@@ -610,6 +649,11 @@ fn main() -> Result<()> {
                 "p_small": p_small.unwrap_or(penalty),
                 "p_thresh": p_thresh,
                 "checksum": sum,
+                "load": load.l1,
+                "load5": load.l5,
+                "load15": load.l15,
+                "max_load": load.max_load,
+                "load_override": load.override_used,
             });
             println!("{}", serde_json::to_string(&record)?);
         }
@@ -618,11 +662,14 @@ fn main() -> Result<()> {
             sizes,
             threads,
             seed,
+            max_load,
+            allow_loaded,
             budget,
             topk,
             out,
             search_layout,
         } => {
+            let load = load_guard(max_load, allow_loaded)?;
             let name = stem(&problem);
             let problem = load_problem(&problem, &sizes)?;
             let orig = dense::generate_inputs(&problem, seed);
@@ -728,7 +775,7 @@ fn main() -> Result<()> {
                 .map_err(|e| anyhow::anyhow!("verify error: {e:?}"))?;
             anyhow::ensure!(ok);
             std::fs::write(&out, serde_json::to_string(&current)?)?;
-            println!("{}", serde_json::json!({"kind":"search-done","problem":name,"accepted":accepted,"best_ms":best_ms,"out":format!("{}",out.display())}));
+            println!("{}", serde_json::json!({"kind":"search-done","problem":name,"accepted":accepted,"best_ms":best_ms,"out":format!("{}",out.display()),"load":load.l1,"max_load":load.max_load,"load_override":load.override_used}));
         }
         Cmd::Flops { problem, sizes } => {
             let name = stem(&problem);
@@ -756,10 +803,13 @@ fn main() -> Result<()> {
             threads,
             iters,
             seed,
+            max_load,
+            allow_loaded,
             transform,
             candidate,
             layout,
         } => {
+            let load = load_guard(max_load, allow_loaded)?;
             let name = stem(&problem);
             let problem = load_problem(&problem, &sizes)?;
             if dense::estimate_input_bytes(&problem) / (1 << 20) > 3000 {
@@ -790,7 +840,9 @@ fn main() -> Result<()> {
                 rows.push((p * 1e3, m.median_ms)); // both ms
             }
             let rho = spearman(&rows);
-            println!("problem {name} threads {threads}: spearman = {rho:.3}, n = {}", rows.len());
+            println!("problem {name} threads {threads}: spearman = {rho:.3}, n = {} (load {:.2}, max_load {:.2}{})",
+                rows.len(), load.l1, load.max_load,
+                if load.override_used { ", OVERRIDE" } else { "" });
             let mut sorted = rows.clone();
             sorted.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
             println!("top-10 by measured: (measured_ms, predicted_ms)");
@@ -1247,10 +1299,13 @@ let t0 = std::time::Instant::now();
             threads,
             iters,
             seed,
+            max_load,
+            allow_loaded,
             transform,
             candidate,
             layout,
         } => {
+            let load = load_guard(max_load, allow_loaded)?;
             let name = stem(&problem);
             let problem = load_problem(&problem, &sizes)?;
             if dense::estimate_input_bytes(&problem) / (1 << 20) > 3000 {
@@ -1286,6 +1341,11 @@ let t0 = std::time::Instant::now();
                 "threads": threads,
                 "total_median_ms": total,
                 "ops": out,
+                "load": load.l1,
+                "load5": load.l5,
+                "load15": load.l15,
+                "max_load": load.max_load,
+                "load_override": load.override_used,
             });
             println!("{}", serde_json::to_string_pretty(&record)?);
         }
@@ -1296,6 +1356,8 @@ let t0 = std::time::Instant::now();
             iters,
             warmup,
             seed,
+            max_load,
+            allow_loaded,
             transform,
             candidate,
             layout,
@@ -1306,8 +1368,8 @@ let t0 = std::time::Instant::now();
             log,
         } => {
             cmd_report(
-                problem, sizes, threads, iters, warmup, seed, transform, candidate, layout,
-                penalty, store, anchor, top, log,
+                problem, sizes, threads, iters, warmup, seed, max_load, allow_loaded,
+                transform, candidate, layout, penalty, store, anchor, top, log,
             )?;
         }
     }
@@ -1414,6 +1476,68 @@ fn enforce_flop_cap(
         .map_err(|e| anyhow::anyhow!("baseline flops: {e:?}"))?;
     anyhow::ensure!(baseline_log <= cap_log + 1e-10, "baseline exceeds its own cap");
     Ok((baseline.clone(), baseline_log, true))
+}
+
+#[cfg(test)]
+mod load_guard_tests {
+    use super::*;
+
+    #[test]
+    fn refuses_above_threshold_and_honors_override() {
+        // F-006: a benchmark under load must not silently run.
+        assert!(load_guard_decision(24.0, 8.0, false).is_err());
+        assert!(load_guard_decision(8.01, 8.0, false).is_err());
+        assert!(load_guard_decision(8.0, 8.0, false).is_ok());
+        assert!(load_guard_decision(1.0, 8.0, false).is_ok());
+        // Explicit override passes but is auditable via LoadInfo.override_used.
+        assert!(load_guard_decision(24.0, 8.0, true).is_ok());
+        // Unsamplable load (non-Linux) must not brick the runner.
+        assert!(load_guard_decision(f64::NAN, 8.0, false).is_ok());
+    }
+
+    #[test]
+    fn default_threshold_scales_with_cpus() {
+        // F-006 class incident was load 24 on 16 cores; default is ncpus/2.
+        let d = default_max_load();
+        assert!(d >= 1.0);
+        let n = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+        if n >= 2 {
+            assert!((d - n as f64 / 2.0).abs() < 1e-9);
+        }
+    }
+
+    #[test]
+    fn timing_commands_expose_the_guard_flags() {
+        for args in [
+            vec!["harness", "time", "p.json"],
+            vec!["harness", "profile", "p.json"],
+            vec!["harness", "cost-check", "p.json"],
+            vec!["harness", "report", "p.json"],
+        ] {
+            let cli = Cli::try_parse_from(args).unwrap();
+            let (max_load, allow_loaded) = match cli.cmd {
+                Cmd::Time { max_load, allow_loaded, .. }
+                | Cmd::Profile { max_load, allow_loaded, .. }
+                | Cmd::CostCheck { max_load, allow_loaded, .. }
+                | Cmd::Report { max_load, allow_loaded, .. } => (max_load, allow_loaded),
+                _ => panic!("expected a timing command"),
+            };
+            assert!(max_load.is_none());
+            assert!(!allow_loaded);
+        }
+        // Explicit flags parse.
+        let cli = Cli::try_parse_from([
+            "harness", "time", "p.json", "--max-load", "2.5", "--allow-loaded",
+        ])
+        .unwrap();
+        match cli.cmd {
+            Cmd::Time { max_load, allow_loaded, .. } => {
+                assert_eq!(max_load, Some(2.5));
+                assert!(allow_loaded);
+            }
+            _ => panic!("expected time command"),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1793,9 +1917,57 @@ fn run_structural(
 // report: the decomposed run panel (M1.0)
 // ---------------------------------------------------------------------------
 
-fn load_avg() -> Option<f64> {
+fn load_avgs() -> Option<(f64, f64, f64)> {
     let s = std::fs::read_to_string("/proc/loadavg").ok()?;
-    s.split_whitespace().next()?.parse().ok()
+    let mut it = s.split_whitespace();
+    let l1 = it.next()?.parse().ok()?;
+    let l5 = it.next()?.parse().ok()?;
+    let l15 = it.next()?.parse().ok()?;
+    Some((l1, l5, l15))
+}
+
+fn default_max_load() -> f64 {
+    let n = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
+    (n as f64 / 2.0).max(1.0)
+}
+
+/// Load sample attached to every timing record.
+struct LoadInfo {
+    l1: f64,
+    l5: f64,
+    l15: f64,
+    max_load: f64,
+    /// true iff the run proceeded only because --allow-loaded was passed
+    /// while load exceeded the threshold (auditable override, F-006).
+    override_used: bool,
+}
+
+/// F-006 decision, pure for testing: refuse to benchmark above threshold.
+fn load_guard_decision(l1: f64, max_load: f64, allow_loaded: bool) -> Result<()> {
+    if !allow_loaded && l1.is_finite() && l1 > max_load {
+        anyhow::bail!(
+            "load guard: 1-min load average {l1:.2} exceeds --max-load {max_load:.2}; \
+             timings under load are invalid (F-006). Wait for the machine to idle, \
+             or pass --allow-loaded to record an explicit override."
+        );
+    }
+    Ok(())
+}
+
+/// Sample load at run start and enforce the F-006 guard.
+fn load_guard(max_load: Option<f64>, allow_loaded: bool) -> Result<LoadInfo> {
+    let max_load = max_load.unwrap_or_else(default_max_load);
+    let (l1, l5, l15) = load_avgs().unwrap_or((f64::NAN, f64::NAN, f64::NAN));
+    load_guard_decision(l1, max_load, allow_loaded)?;
+    Ok(LoadInfo {
+        l1,
+        l5,
+        l15,
+        max_load,
+        override_used: allow_loaded && l1.is_finite() && l1 > max_load,
+    })
 }
 
 fn git_hash() -> String {
@@ -1829,6 +2001,8 @@ fn cmd_report(
     iters: usize,
     warmup: usize,
     seed: u64,
+    max_load: Option<f64>,
+    allow_loaded: bool,
     transform: String,
     candidate: Option<PathBuf>,
     layout: String,
@@ -1838,7 +2012,7 @@ fn cmd_report(
     top: usize,
     log: Option<PathBuf>,
 ) -> Result<()> {
-    let load = load_avg();
+    let load = load_guard(max_load, allow_loaded)?;
     let git = git_hash();
     let name = stem(&problem);
     let cand_label = candidate
@@ -2001,9 +2175,11 @@ fn cmd_report(
     let protocol_ok = iters >= 10 && warmup >= 3;
     println!();
     println!(
-        "validity: iters {iters} warmup {warmup} {}  load {:.2}  git {}  checksum {:.3}",
+        "validity: iters {iters} warmup {warmup} {}  load {:.2} (limit {:.2}{})  git {}  checksum {:.3}",
         if protocol_ok { "protocol-OK" } else { "SUB-PROTOCOL (need >=10/>=3)" },
-        load.unwrap_or(f64::NAN),
+        load.l1,
+        load.max_load,
+        if load.override_used { ", OVERRIDE" } else { "" },
         git,
         csum
     );
@@ -2025,7 +2201,11 @@ fn cmd_report(
         "categories": cat,
         "top1_share": top1,
         "top5_share": top5,
-        "load": load,
+        "load": load.l1,
+        "load5": load.l5,
+        "load15": load.l15,
+        "max_load": load.max_load,
+        "load_override": load.override_used,
         "git": git,
         "checksum": csum,
         "date": chrono_lite_now(),
