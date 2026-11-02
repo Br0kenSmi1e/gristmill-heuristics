@@ -1621,20 +1621,22 @@ mod axis1_tests {
     }
 
     #[test]
-    fn over_cap_mp3_schedule_falls_back_to_baseline() {
+    fn over_cap_ccd_schedule_falls_back_to_baseline() {
         let mut problem = Problem::from_json(include_str!(
-            "../../../benches/chemistry/mp3.json"
+            "../../../benches/chemistry/ccd.json"
         ))
         .unwrap();
         problem.sizes.insert(DomainId(0), 16);
         problem.sizes.insert(DomainId(1), 64);
         // The over-cap fixture is the problem's own naive reference program
-        // (always above the cap), NOT a checked-in selected candidate: the
-        // v2-era mp3_selected is legitimately under-cap, and a fixture that
-        // depends on a regenerated candidate's flop count is unstable.
+        // (log10 FLOPs 13.36 vs baseline 10.22 — three orders of magnitude
+        // over, robust against selector/candidate drift). A checked-in
+        // selected candidate is NOT a valid fixture: the v2-era mp3_selected
+        // is legitimately under-cap and broke the old version of this test,
+        // and even mp3's naive reference (10.25) sits under its own cap.
         let over_cap = problem.reference.clone();
         let baseline: truthmill::Program = serde_json::from_str(include_str!(
-            "../../../benches/candidates/mp3_gristmill.json"
+            "../../../benches/candidates/ccd_gristmill.json"
         ))
         .unwrap();
         let baseline_log = truthmill::log_flops(&problem, &baseline).unwrap();
