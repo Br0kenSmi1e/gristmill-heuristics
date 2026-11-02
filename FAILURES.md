@@ -1,7 +1,24 @@
 # FAILURES — the failure registry
 
 One entry per failure: symptom, mechanism (verified BEFORE fix), exposing
-fixture, fix, regression pointer. Seeded retroactively from the prequel
+fixture, fix, regression pointer. CLOSED entries are kept for audit
+(including retractions — a retraction is a finding, not an embarrassment).
+
+## Open queue (work items live here; read this first)
+
+- **F-004** cost model blind to high-rank slow path — M1.1 calibration
+- **F-005** kernel enumeration explodes on large defs — I-006
+- **F-006** benchmark contamination guard — partially structural now
+  (harness report footer records load); runner-level guard pending
+- **F-007** selector behind gristmill on ADC2/EOM — ADC2 mechanism verified
+- **F-016** model error untracked on held-out — calibration owned by M1
+- **F-017** CCSD(T) memory: HARD blocker, no full-size reruns
+- **F-021** structured exam records — mostly done; per-run load pending F-006
+
+Entries below are in rough filing order, not priority order; the two
+"Critic challenges" sections are milestone-review records.
+
+Seeded retroactively from the prequel
 study (archive/RESEARCH-v1.md, tag `hl-study-final`).
 
 ## F-001 per-use argmax layout starves multi-use tensors [CLOSED]
