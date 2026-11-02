@@ -18,9 +18,19 @@ PROTOCOL.md. What is broken: FAILURES.md. What we might try: IDEAS.md.
   backend's own contraction tree, price clean vs slow GEMM + permute passes
   with calibrated rates; per-op ranking rho ~ 0.93 on ccd/ccsd. This model
   is the compiler's heart — and F-004 is its known hole.
-- **Wall-time-priced selection is a real lever** (FLOP-greedy selection on
-  the same rewrite space loses or stalls), but the valid a8bf146 exam gives
-  six-problem geomean 0.902x t1 / 0.883x t16 vs same-equation gristmill.
+- **Wall-time-priced selection is a real lever**, and the exam-cd921bd
+  milestone (debug binary pinned, per-run load, Axis-0 14/14 pairs green):
+  **Axis 1 is green for the first time** (all six <=1.05x: five by
+  baseline-fallback identity, mp3 0.969x genuinely below). Axis 2 six-problem
+  geomean 1.030x t1 / 1.031x t16 vs same-equation gristmill — but five of six
+  cells are fallback-vs-baseline noise (+-9%); the only genuine non-fallback
+  result is MP3 (1.194x t1 / 1.139x t16, fewer FLOPs AND faster). The v2-priced
+  greedy selector beats the baseline only on mp3: search quality under the
+  corrected model is now the binding Axis-2 question (F-007 reframed).
+  ccsd_t remains untimed-vs-baseline (F-017; its selected candidate runs but
+  at 27.1 s/iter t1 — the reduction-class slowness in vivo). Exam-cd921bd
+  numbers supersede a8bf146's (which never pinned its binary profile; its
+  absolute ms are unanchored, ratios still valid).
   All 12 mixed per-cell results, including CCSD/lambda thread inversions,
   are reported in F-007. That exam's Axis-1 red led to a mandatory emission
   cap with verified-baseline fallback (F-018); search-quality losses remain
@@ -62,13 +72,9 @@ PROTOCOL.md. What is broken: FAILURES.md. What we might try: IDEAS.md.
 
 ## Next investment
 
-M1 (in progress): calibration suite DONE (profiles/calibrate-v1.json,
-trials/m11-calibration.jsonl); cost model v2 DONE (0b44e61, model-ci gate
-in cargo test); load guard DONE (F-006, 282577c). Remaining: extend the
-calibration grid with the F-016 gap classes (k-heavy low-rank-out,
-rank-6 lincomb floor) and price them. F-004 acceptance met: ccsd_t
-intermediate einsum ops predicted within [0.40x, 1.41x] (gate: 2x).
-MILESTONE FIRED by the model-v2 landing (spec-axis-relevant selection
-behavior changed on the train corpus: CCD now emits the baseline fallback);
-exam + tournament + critic are due. I-005 revival rule fired and resolved
-without a tournament: its disqualifying Axis-1 clause is model-independent.
+Milestone after exam-cd921bd: EXAM done (green Axis 1, geomean 1.030/1.031),
+TOURNAMENT disposition recorded (no evaluable challenger; slot unchanged),
+CRITIC pending (fresh-context session). Then: M1 tail = calibration-grid
+extension for the F-016 gap classes (k-heavy low-rank-out contractions at
+0.26 GF/s, rank-6 lincomb floor); M2 = F-005/I-006 enumeration budget and
+v2-era search quality (F-007 reframed).

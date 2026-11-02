@@ -117,8 +117,6 @@ def main():
     # ---- Phase B: Axis 0 (gate) ----
     pairs = []
     for prob in PROBLEMS:
-        if prob == "ccsd_t":
-            continue
         for cand in [f"{prob}_selected", f"{prob}_gristmill"]:
             pairs.append((prob, cand))
     worst = 0.0

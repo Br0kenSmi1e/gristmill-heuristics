@@ -7,7 +7,8 @@ fixture, fix, regression pointer. CLOSED entries are kept for audit
 ## Open queue (work items live here; read this first)
 
 - **F-005** kernel enumeration explodes on large defs — I-006
-- **F-007** selector behind gristmill on ADC2/EOM — ADC2 mechanism verified
+- **F-007** selector behind gristmill on ADC2/EOM — ADC2 mechanism verified;
+  under model v2 the selector beats baseline only on mp3 (exam-cd921bd)
 - **F-016** model error untracked on held-out — calibration owned by M1;
   new v2 gap classes (k-heavy low-rank-out, lincomb rank-6) logged
 - **F-017** CCSD(T) memory: HARD blocker, no full-size reruns
@@ -141,6 +142,16 @@ study (archive/RESEARCH-v1.md, tag `hl-study-final`).
   1162.1 ms measured; model correctly ranks gristmill better), but its
   selector reproduction timed out after 240 s / three steps, so an identical
   path mechanism there is not yet claimed.
+- v2-era state (exam-cd921bd, debug binary pinned): under model v2 + the
+  F-018 cap, five of six regenerated candidates are baseline fallbacks, so
+  their Axis-2 cells are same-program noise (+-9%: ccd/ccsd/lambda/eom/adc2
+  ratios 0.949-1.089 around 1.0). The old losses (adc2 0.626x, eom 0.794x,
+  lambda t16 0.580x) are gone BY CONSTRUCTION — the compiler no longer ships
+  them — but the same fact means the v2-priced greedy selector finds nothing
+  better than baseline on ccd/ccsd/adc2/eom/lambda. mp3 is the exception:
+  2 accepted steps, FLOPs 0.969x BELOW baseline, measured 1.194x t1 /
+  1.139x t16. Open question reframed: is v2-greedy search quality (not the
+  v1-era acceptance hole) the binding constraint on Axis 2?
 - exposing fixture: `adc2_selected.json` vs same-equation
   `adc2_gristmill.json`; exact selector reproduction is
   `harness select benches/chemistry/adc2.json --sizes 0=16,1=64 --threads 1`.
@@ -201,6 +212,17 @@ study (archive/RESEARCH-v1.md, tag `hl-study-final`).
   passes. Full-size scalar oracle was not used (exponential; F-015 convention).
 
 ---
+
+## F-026 exam-cd921bd driver omitted ccsd_t from Axis 0 [CLOSED — addendum recorded, script fixed]
+- symptom: tools/run_exam.py phase B skipped ccsd_t pairs entirely, while
+  the a8bf146 exam covered all 14 pairs; only ccsd_t TIMING is
+  memory-blocked (F-017) — its (3,5) Axis-0 checks are cheap and required.
+- mechanism: my exclusion logic conflated the timing blocker with the
+  correctness gate. Found by self-review before the milestone closed.
+- fix: phase B includes all problems; the two omitted checks ran as a
+  recorded addendum (both pass, worst rel 2.5e-15) in
+  trials/exam-cd921bd.jsonl (kind=protected-exam-axis0-addendum).
+- regression: run_exam.py phase B covers all seven problems.
 
 ## Critic challenges (milestone after I-005 retirement; filed by fresh-context critic, milestone stays OPEN until each is fixed or rebutted with evidence)
 
