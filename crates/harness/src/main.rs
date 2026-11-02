@@ -206,6 +206,42 @@ enum Cmd {
         #[arg(long, default_value = "none")]
         layout: String,
     },
+    /// Decomposed run report: whole-program timing + per-op panel with model
+    /// predictions, validity footer, and optional pinned-anchor comparison.
+    Report {
+        problem: PathBuf,
+        #[arg(long)]
+        sizes: Option<String>,
+        #[arg(long, default_value = "1")]
+        threads: usize,
+        #[arg(long, default_value = "5")]
+        iters: usize,
+        #[arg(long, default_value = "1")]
+        warmup: usize,
+        #[arg(long, default_value = "0")]
+        seed: u64,
+        #[arg(long, default_value = "none")]
+        transform: String,
+        /// External candidate Program JSON; skips transform
+        #[arg(long)]
+        candidate: Option<PathBuf>,
+        #[arg(long, default_value = "model")]
+        layout: String,
+        #[arg(long, default_value = "2.7")]
+        penalty: f64,
+        /// Store this run as a pinned anchor profile at this path.
+        #[arg(long)]
+        store: Option<PathBuf>,
+        /// Compare against a previously stored anchor profile.
+        #[arg(long)]
+        anchor: Option<PathBuf>,
+        /// Max ops in the top list; rest is aggregated.
+        #[arg(long, default_value = "15")]
+        top: usize,
+        /// Append the run record as a JSON line to this file.
+        #[arg(long)]
+        log: Option<PathBuf>,
+    },
 }
 
 fn best_kernel_action(
@@ -1253,6 +1289,27 @@ let t0 = std::time::Instant::now();
             });
             println!("{}", serde_json::to_string_pretty(&record)?);
         }
+        Cmd::Report {
+            problem,
+            sizes,
+            threads,
+            iters,
+            warmup,
+            seed,
+            transform,
+            candidate,
+            layout,
+            penalty,
+            store,
+            anchor,
+            top,
+            log,
+        } => {
+            cmd_report(
+                problem, sizes, threads, iters, warmup, seed, transform, candidate, layout,
+                penalty, store, anchor, top, log,
+            )?;
+        }
     }
     Ok(())
 }
@@ -1730,4 +1787,263 @@ fn run_structural(
     });
     println!("{}", serde_json::to_string(&record)?);
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// report: the decomposed run panel (M1.0)
+// ---------------------------------------------------------------------------
+
+fn load_avg() -> Option<f64> {
+    let s = std::fs::read_to_string("/proc/loadavg").ok()?;
+    s.split_whitespace().next()?.parse().ok()
+}
+
+fn git_hash() -> String {
+    std::process::Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|| "unknown".into())
+}
+
+fn sha256_file(path: &PathBuf) -> String {
+    // Cheap digest: length + FNV-1a of contents (not cryptographic; detects edits).
+    use std::hash::Hasher;
+    match std::fs::read(path) {
+        Ok(bytes) => {
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            std::hash::Hash::hash(&bytes, &mut h);
+            format!("{:016x}:{}", h.finish(), bytes.len())
+        }
+        Err(_) => "unreadable".into(),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn cmd_report(
+    problem: PathBuf,
+    sizes: Option<String>,
+    threads: usize,
+    iters: usize,
+    warmup: usize,
+    seed: u64,
+    transform: String,
+    candidate: Option<PathBuf>,
+    layout: String,
+    penalty: f64,
+    store: Option<PathBuf>,
+    anchor: Option<PathBuf>,
+    top: usize,
+    log: Option<PathBuf>,
+) -> Result<()> {
+    let load = load_avg();
+    let git = git_hash();
+    let name = stem(&problem);
+    let cand_label = candidate
+        .as_ref()
+        .map(|p| stem(p))
+        .unwrap_or_else(|| format!("transform:{transform}"));
+    let problem = load_problem(&problem, &sizes)?;
+    if dense::estimate_input_bytes(&problem) / (1 << 20) > 3000 {
+        anyhow::bail!("memory guard: inputs too large; shrink sizes");
+    }
+    let program = load_program(&problem, &transform, 256, candidate.clone())?;
+    let orig = dense::generate_inputs_for(&problem, &[&program], seed);
+    let (program, blocks) = apply_layout_with(
+        &problem,
+        program,
+        &layout,
+        orig,
+        &layout2::PolicyParams {
+            p_big: penalty,
+            p_small: penalty,
+            thresh: 1e8,
+        },
+        threads,
+    )?;
+    let tensor_blocks = interp::to_tensor_blocks_permuted(&blocks.permuted)?;
+    let est = interp::estimate_memory(&program, &tensor_blocks, &problem.sizes, 1 << 30);
+    let peak_mb = est.peak_live_bytes / (1 << 20);
+    if !est.risky_ops.is_empty() || peak_mb > 6000 {
+        anyhow::bail!("memory guard tripped: {:?}", est.risky_ops);
+    }
+
+    let rates = costmodel::rates_for_threads(threads);
+    let predicted = costmodel::program_costs(&program, &problem.sizes, &blocks.layouts, &rates);
+    let mut backend = CpuBackend::with_threads(threads).map_err(anyhow::Error::msg)?;
+
+    // Whole-program steady-state timing (the number that counts).
+    let plans = interp::prepare(&program, &tensor_blocks)?;
+    let mut times = Vec::with_capacity(iters);
+    let mut csum = 0.0;
+    for i in 0..(warmup + iters) {
+        let start = Instant::now();
+        let outputs = interp::run_prepared(&program, &plans, &tensor_blocks, &mut backend)?;
+        if i >= warmup {
+            times.push(start.elapsed().as_secs_f64() * 1e3);
+        }
+        csum += interp::checksum(&outputs);
+    }
+    times.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let total_ms = times[times.len() / 2];
+
+    // Per-op profile (op-level medians; sum may differ from total due to
+    // whole-program cache/liveness state — report both, never conflate).
+    let profiles = interp::profile_ops(&program, &tensor_blocks, &mut backend, iters, &problem.sizes)?;
+    let opsum_ms: f64 = profiles.iter().map(|p| p.median_ms).sum();
+
+    // Category totals (einsum vs lincomb).
+    let mut cat: BTreeMap<&str, f64> = BTreeMap::new();
+    for p in &profiles {
+        *cat.entry(p.kind).or_default() += p.median_ms;
+    }
+
+    // Panel.
+    println!("=== report: {name} / {cand_label} ===");
+    println!(
+        "sizes {:?}  threads {threads}  total {:.1} ms  (sum of op medians {:.1} ms)",
+        sizes_map(&problem),
+        total_ms,
+        opsum_ms
+    );
+    println!("peak-memory estimate: {peak_mb} MB");
+    println!();
+    println!("top ops by measured time (vs model):");
+    let mut rows: Vec<(usize, &interp::OpProfile, f64)> = profiles
+        .iter()
+        .enumerate()
+        .map(|(i, p)| (i, p, predicted.get(p.value).copied().unwrap_or(f64::NAN) * 1e3))
+        .collect();
+    rows.sort_by(|a, b| b.1.median_ms.partial_cmp(&a.1.median_ms).unwrap());
+    for (i, p, pred_ms) in rows.iter().take(top) {
+        let ratio = p.median_ms / pred_ms.max(1e-9);
+        let flag = if ratio > 2.0 || ratio < 0.5 {
+            "  MODEL-MISS"
+        } else {
+            ""
+        };
+        println!(
+            "  op#{i:<4} {:<8} {:9.2} ms ({:4.1}%)  model {:9.2} ms{flag}",
+            p.kind,
+            p.median_ms,
+            100.0 * p.median_ms / opsum_ms.max(1e-9),
+            pred_ms
+        );
+    }
+    let rest: f64 = rows.iter().skip(top).map(|r| r.1.median_ms).sum();
+    println!("  ... +{} ops aggregated: {:.1} ms", rows.len().saturating_sub(top), rest);
+    println!();
+    println!("model-miss outliers (|measured/model| outside [0.5, 2], any size):");
+    let mut n_miss = 0;
+    for (i, p, pred_ms) in &rows {
+        let ratio = p.median_ms / pred_ms.max(1e-9);
+        if ratio > 2.0 || ratio < 0.5 {
+            println!(
+                "  op#{i:<4} {:<8} measured {:8.2} ms  model {:8.2} ms  ratio {:5.2}x",
+                p.kind, p.median_ms, pred_ms, ratio
+            );
+            n_miss += 1;
+        }
+    }
+    if n_miss == 0 {
+        println!("  (none)");
+    }
+    println!();
+    println!("category totals:");
+    for (k, v) in &cat {
+        println!("  {k:<10} {:9.2} ms ({:4.1}%)", v, 100.0 * v / opsum_ms.max(1e-9));
+    }
+    let top1 = rows.first().map(|r| r.1.median_ms / opsum_ms.max(1e-9)).unwrap_or(0.0);
+    let top5: f64 = rows.iter().take(5).map(|r| r.1.median_ms).sum::<f64>() / opsum_ms.max(1e-9);
+    println!();
+    println!("concentration: top-1 op {:.1}%, top-5 ops {:.1}%", 100.0 * top1, 100.0 * top5);
+
+    // Anchor comparison (aggregates only: no op-level alignment exists).
+    if let Some(anchor_path) = &anchor {
+        let txt = std::fs::read_to_string(anchor_path)?;
+        let a: serde_json::Value = serde_json::from_str(&txt)?;
+        let a_total = a["total_ms"].as_f64().unwrap_or(f64::NAN);
+        println!();
+        println!("vs anchor {} (pinned):", anchor_path.display());
+        println!("  total: {total_ms:.1} ms vs {a_total:.1} ms  ({:.3}x)", total_ms / a_total);
+        if let Some(obj) = a["categories"].as_object() {
+            let a_opsum = a["opsum_ms"].as_f64().unwrap_or(f64::NAN);
+            for (k, v) in obj {
+                let share_a = v.as_f64().unwrap_or(0.0) / a_opsum;
+                let share_c = cat.get(k.as_str()).copied().unwrap_or(0.0) / opsum_ms.max(1e-9);
+                println!(
+                    "  {k:<10} share: ours {:.1}% vs anchor {:.1}%",
+                    100.0 * share_c,
+                    100.0 * share_a
+                );
+            }
+        }
+        println!(
+            "  anchor provenance: git {}  date {}  load {}  digest {}",
+            a["git"].as_str().unwrap_or("?"),
+            a["date"].as_str().unwrap_or("?"),
+            a["load"].as_f64().unwrap_or(f64::NAN),
+            a["digest"].as_str().unwrap_or("?")
+        );
+        println!("  (drift check: re-store the anchor if machine/backend changed)");
+    }
+
+    // Validity footer.
+    let protocol_ok = iters >= 10 && warmup >= 3;
+    println!();
+    println!(
+        "validity: iters {iters} warmup {warmup} {}  load {:.2}  git {}  checksum {:.3}",
+        if protocol_ok { "protocol-OK" } else { "SUB-PROTOCOL (need >=10/>=3)" },
+        load.unwrap_or(f64::NAN),
+        git,
+        csum
+    );
+
+    // Store / log.
+    let rec = serde_json::json!({
+        "kind": "report",
+        "problem": name,
+        "candidate": cand_label,
+        "digest": candidate.as_ref().map(sha256_file).unwrap_or_default(),
+        "sizes": sizes_map(&problem),
+        "threads": threads,
+        "iters": iters,
+        "warmup": warmup,
+        "protocol_ok": protocol_ok,
+        "total_ms": total_ms,
+        "opsum_ms": opsum_ms,
+        "peak_mb": peak_mb,
+        "categories": cat,
+        "top1_share": top1,
+        "top5_share": top5,
+        "load": load,
+        "git": git,
+        "checksum": csum,
+        "date": chrono_lite_now(),
+        "ops": profiles.iter().enumerate().map(|(i, p)| serde_json::json!({
+            "value": i, "kind": p.kind, "median_ms": p.median_ms,
+            "model_ms": predicted.get(p.value).copied().unwrap_or(f64::NAN) * 1e3,
+        })).collect::<Vec<_>>(),
+    });
+    if let Some(path) = &store {
+        std::fs::write(path, serde_json::to_string_pretty(&rec)?)?;
+        eprintln!("anchor stored: {}", path.display());
+    }
+    if let Some(path) = &log {
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
+        writeln!(f, "{}", serde_json::to_string(&rec)?)?;
+    }
+    Ok(())
+}
+
+fn chrono_lite_now() -> String {
+    // Avoid a chrono dependency: seconds since epoch is enough for ordering.
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    format!("unix:{secs}")
 }
