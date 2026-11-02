@@ -229,6 +229,14 @@ enum Cmd {
         #[arg(long)]
         out: Option<PathBuf>,
     },
+    /// Model-vs-calibration CI gate (F-004): price the committed
+    /// calibration grid with the current cost model; fail outside 2x.
+    /// Pure model evaluation against a stored measurement file: no timing.
+    ModelCi {
+        /// Calibration JSON produced by `harness calibrate --out`.
+        #[arg(long, default_value = "profiles/calibrate-v1.json")]
+        from: PathBuf,
+    },
     /// Per-op timing profile of one program execution (prepared plans).
     Profile {
         problem: PathBuf,
@@ -1329,6 +1337,28 @@ let t0 = std::time::Instant::now();
                 .map(|s| s.trim().parse().context("bad --threads"))
                 .collect::<Result<_>>()?;
             calibrate::run(&threads_list, iters, warmup, &load, out.as_ref())?;
+        }
+        Cmd::ModelCi { from } => {
+            let text = std::fs::read_to_string(&from)
+                .with_context(|| format!("reading {from:?}"))?;
+            let doc: serde_json::Value = serde_json::from_str(&text)?;
+            let rows = calibrate::model_ratios(&doc)?;
+            println!("model-vs-calibration ({}):", from.display());
+            for r in &rows {
+                println!(
+                    "  {:26} o={:<3} v={:<7} t{:<2} measured {:9.2} ms  model {:9.2} ms  {:5.2}x",
+                    r.case, r.o, r.v, r.threads, r.measured_ms, r.model_ms, r.ratio
+                );
+            }
+            let failures = calibrate::model_ci_failures(&rows);
+            if failures.is_empty() {
+                println!("model CI: PASS (all non-excepted cases within 2x)");
+            } else {
+                for f in &failures {
+                    eprintln!("MODEL-CI FAIL: {f}");
+                }
+                anyhow::bail!("model CI: {} non-excepted failures", failures.len());
+            }
         }
         Cmd::Profile {
             problem,

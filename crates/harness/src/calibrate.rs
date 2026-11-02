@@ -47,6 +47,32 @@ enum FlopModel {
 
 use Dim::{Fixed, O, V};
 
+/// Reconstruct one case at one scale: (physical input label orders, output
+/// labels, per-label extents). Label id = char as u32 (consistent within a
+/// case; only relative order matters for the model).
+fn case_spec(
+    case: &Case,
+    o: usize,
+    v: usize,
+) -> Result<(Vec<Vec<u32>>, Vec<u32>, BTreeMap<u32, usize>)> {
+    let (inputs, output) = parse_einsum(case.einsum)?;
+    let mut size_of = BTreeMap::new();
+    for (c, d) in case.dims {
+        let s = match d {
+            O => o,
+            V => v,
+            Fixed(n) => *n,
+        };
+        size_of.insert(*c as u32, s);
+    }
+    let phys: Vec<Vec<u32>> = inputs
+        .iter()
+        .map(|inp| inp.iter().map(|c| *c as u32).collect())
+        .collect();
+    let out: Vec<u32> = output.iter().map(|c| *c as u32).collect();
+    Ok((phys, out, size_of))
+}
+
 /// The grid. Anchors first (continuity with the v1 committed rates), then
 /// the F-004 discriminators.
 const CASES: &[Case] = &[
@@ -292,4 +318,115 @@ pub fn run(
         eprintln!("calibration written: {}", path.display());
     }
     Ok(())
+}
+
+/// One model-vs-measured comparison row.
+pub struct ModelRatio {
+    pub case: String,
+    pub o: usize,
+    pub v: usize,
+    pub threads: usize,
+    pub measured_ms: f64,
+    pub model_ms: f64,
+    /// measured / model; 1.0 is perfect, >1 means the model under-predicts.
+    pub ratio: f64,
+}
+
+/// Documented exceptions to the 2x gate. Each entry MUST carry a reason;
+/// adding an exception is a ledger-visible act (cite the F-entry).
+const MODEL_CI_EXCEPTIONS: &[(&str, usize, &str)] = &[
+    (
+        "bin_r6_out1",
+        16,
+        "rank-1-output reduction at t16 is pathological AND unstable (2.6x \
+         session variance, F-004); priced pessimistically, error is an \
+         over-prediction at small sizes (safe direction for selection)",
+    ),
+    (
+        "tern_lowrank_control",
+        0,
+        "small-m GEMM chains: per-step dispatch overhead dominates at \
+         v<=128; pre-existing v1 gap, absolute cost tiny (F-016 data)",
+    ),
+    (
+        "quad_r6_scalar",
+        16,
+        "t16 timing unstable across guard-compliant sessions (61.6 vs 15.9 \
+         ms at (8,16): 3.9x apart, trials/m11-calibration.jsonl); the model \
+         sits between the two sessions, so no point rate passes both",
+    ),
+];
+
+/// Price every record of a calibration document with the current cost
+/// model. Pure function of the committed measurements: no timing, so it
+/// runs in CI and cargo tests.
+pub fn model_ratios(doc: &serde_json::Value) -> Result<Vec<ModelRatio>> {
+    let mut rows = Vec::new();
+    for rec in doc["records"]
+        .as_array()
+        .context("calibration doc missing records")?
+    {
+        let name = rec["case"].as_str().context("record missing case")?;
+        let case = CASES
+            .iter()
+            .find(|c| c.name == name)
+            .with_context(|| format!("unknown calibration case {name}"))?;
+        let o = rec["o"].as_u64().unwrap_or(0) as usize;
+        let v = rec["v"].as_u64().unwrap_or(0) as usize;
+        let threads = rec["threads"].as_u64().unwrap_or(1) as usize;
+        let measured_ms = rec["median_ms"].as_f64().context("missing median_ms")?;
+        let (phys, out, size_of) = case_spec(case, o, v)?;
+        let rates = crate::costmodel::rates_for_threads(threads);
+        let model_ms = crate::costmodel::einsum_cost_model(&phys, &out, &size_of, &rates)
+            .max(rates.dispatch)
+            * 1e3;
+        rows.push(ModelRatio {
+            case: name.to_string(),
+            o,
+            v,
+            threads,
+            measured_ms,
+            model_ms,
+            ratio: measured_ms / model_ms,
+        });
+    }
+    Ok(rows)
+}
+
+/// The 2x gate: returns the list of NON-excepted failures.
+pub fn model_ci_failures(rows: &[ModelRatio]) -> Vec<String> {
+    let mut failures = Vec::new();
+    for r in rows {
+        let ok = (0.5..=2.0).contains(&r.ratio);
+        if ok {
+            continue;
+        }
+        let excepted = MODEL_CI_EXCEPTIONS
+            .iter()
+            .any(|(name, threads, _)| *name == r.case && (*threads == 0 || *threads == r.threads));
+        if !excepted {
+            failures.push(format!(
+                "{} o={} v={} t{}: measured {:.2} ms vs model {:.2} ms ({:.2}x)",
+                r.case, r.o, r.v, r.threads, r.measured_ms, r.model_ms, r.ratio
+            ));
+        }
+    }
+    failures
+}
+
+#[cfg(test)]
+mod tests {
+    /// Model-vs-calibration CI gate (F-004 acceptance): every calibration
+    /// case within 2x, exceptions documented in MODEL_CI_EXCEPTIONS.
+    #[test]
+    fn model_v2_within_2x_of_calibration_grid() {
+        let doc: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../profiles/calibrate-v1.json"
+        ))
+        .unwrap();
+        let rows = super::model_ratios(&doc).unwrap();
+        assert!(!rows.is_empty());
+        let failures = super::model_ci_failures(&rows);
+        assert!(failures.is_empty(), "model CI failures:\n{}", failures.join("\n"));
+    }
 }
