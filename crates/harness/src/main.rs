@@ -2,6 +2,7 @@
 //! executed on tenferro.
 
 mod bridge;
+mod calibrate;
 mod costmodel;
 mod propose;
 mod dense;
@@ -206,6 +207,27 @@ enum Cmd {
         /// Defaults to ../candidates/<problem>_gristmill.json.
         #[arg(long)]
         baseline: Option<PathBuf>,
+    },
+    /// Calibration grid over einsum op classes -> versioned rates file
+    /// (M1.1; the F-004/F-016 calibration source).
+    Calibrate {
+        /// Thread counts, comma-separated.
+        #[arg(long, default_value = "1,16")]
+        threads: String,
+        #[arg(long, default_value = "10")]
+        iters: usize,
+        #[arg(long, default_value = "3")]
+        warmup: usize,
+        /// Refuse to measure when the 1-min load average exceeds this
+        /// (default: half of available CPUs; the F-006 guard).
+        #[arg(long)]
+        max_load: Option<f64>,
+        /// Measure anyway under load; the override is recorded.
+        #[arg(long)]
+        allow_loaded: bool,
+        /// Write the rates JSON here (e.g. profiles/calibrate-vN.json).
+        #[arg(long)]
+        out: Option<PathBuf>,
     },
     /// Per-op timing profile of one program execution (prepared plans).
     Profile {
@@ -1292,6 +1314,21 @@ let t0 = std::time::Instant::now();
                 "trace": trace,
             });
             println!("{}", serde_json::to_string(&record)?);
+        }
+        Cmd::Calibrate {
+            threads,
+            iters,
+            warmup,
+            max_load,
+            allow_loaded,
+            out,
+        } => {
+            let load = load_guard(max_load, allow_loaded)?;
+            let threads_list: Vec<usize> = threads
+                .split(',')
+                .map(|s| s.trim().parse().context("bad --threads"))
+                .collect::<Result<_>>()?;
+            calibrate::run(&threads_list, iters, warmup, &load, out.as_ref())?;
         }
         Cmd::Profile {
             problem,
