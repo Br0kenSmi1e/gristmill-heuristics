@@ -16,7 +16,10 @@ named spec gap. Never "improve the metric" in the abstract.
    For performance/correctness diagnosis, you can use `harness report` —
    it exists to save you from building instrumentation. Whatever you
    diagnose with must be committed or folded into the harness: no
-   ephemeral probes.
+   ephemeral probes. Baseline anchors are pinned in `profiles/`: compare
+   against them via `harness report --anchor`, do NOT re-measure a
+   baseline. If an anchor is missing or stale (machine/backend changed),
+   store a new one with `--store` and note it in the trial line.
 3. DIAGNOSE — verify the mechanism (profile, trace, per-op diff) and record
    it in the F-entry BEFORE attempting the fix. Then the mechanism chooses
    the fix type: if engineering, apply it; if algorithmic, file an I-entry

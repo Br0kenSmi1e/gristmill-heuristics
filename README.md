@@ -24,5 +24,9 @@ Layout:
 - `benches/candidates` — imported baseline schedules (same-equation
   gristmill exports) and selector outputs
 - `tools/` — baseline import/export scripts
+- `profiles/` — pinned baseline anchor profiles (per-op measurements of the
+  gristmill candidates, one frozen set: 6 problems x (16,64) x {t1,t16};
+  ccsd_t absent, blocked by F-017). `harness report` is the analysis
+  panel: per-op timings vs model, anchor comparison, validity footer.
 - `archive/` — the prequel heuristic-learning study (tag `hl-study-final`),
   kept for audit
