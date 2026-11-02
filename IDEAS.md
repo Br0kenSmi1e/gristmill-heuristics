@@ -98,6 +98,10 @@ Some compiler components are permanently open to challenge at tournaments:
   1.265x CCD and 1.600x CCSD, above the required 1.05x. ADC2 gave only 0.049%
   terminal model improvement and did not meet wins-IF. Apparent gains on
   chunked controls were separately inadmissible (F-008).
+- revival rule: fired by the model v2 landing (0b44e61). Resolved WITHOUT a
+  tournament: the disqualifying clause was measured Axis-1 flop ratios
+  (1.265x CCD, 1.600x CCSD), which are invariant under cost-model changes,
+  so retirement stands.
 
 ## I-006 budgeted maximal-biclique enumeration [proposed]
 - hypothesis: a gristmill `greedy_cutoff`-style depth budget inside the

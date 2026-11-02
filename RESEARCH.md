@@ -54,14 +54,21 @@ PROTOCOL.md. What is broken: FAILURES.md. What we might try: IDEAS.md.
 3. F-017: CCSD(T) execution is a HARD RESOURCE BLOCKER. Backend allocations
    exceeded physical memory and filled swap; no full-size reruns. Develop
    memory-safe schedules only on tiny fixtures until static peak is <6 GB.
-4. F-004 / F-016: price high-rank/strided GEMM and close the ADC2 gap error
-   (measured range 1.60–1.92x vs 1.14x predicted; M1).
+4. F-016: price the remaining model-gap classes (k-heavy low-rank-output
+   contractions at 0.26 GF/s, single-k rank-4-out at 0.9 GF/s, rank-6
+   lincomb fixed overhead) via calibration-grid extension; evaluate model v2
+   on the held-out ADC2 gap only at a milestone.
 5. IDEAS.md I-001..I-004, in that order.
 
 ## Next investment
 
 M1 (in progress): calibration suite DONE (profiles/calibrate-v1.json,
-trials/m11-calibration.jsonl). Remaining: cost model v2 pricing the
-reduction regime separately + model-vs-measured CI gate at 2x. Load guard
-inside the timing commands is done (F-006, 282577c). Acceptance: ccsd_t
-intermediate ops predicted within 2x — the exact failure F-004 records.
+trials/m11-calibration.jsonl); cost model v2 DONE (0b44e61, model-ci gate
+in cargo test); load guard DONE (F-006, 282577c). Remaining: extend the
+calibration grid with the F-016 gap classes (k-heavy low-rank-out,
+rank-6 lincomb floor) and price them. F-004 acceptance met: ccsd_t
+intermediate einsum ops predicted within [0.40x, 1.41x] (gate: 2x).
+MILESTONE FIRED by the model-v2 landing (spec-axis-relevant selection
+behavior changed on the train corpus: CCD now emits the baseline fallback);
+exam + tournament + critic are due. I-005 revival rule fired and resolved
+without a tournament: its disqualifying Axis-1 clause is model-independent.

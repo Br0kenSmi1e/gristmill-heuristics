@@ -6,10 +6,10 @@ fixture, fix, regression pointer. CLOSED entries are kept for audit
 
 ## Open queue (work items live here; read this first)
 
-- **F-004** cost model blind to high-rank slow path — M1.1 calibration
 - **F-005** kernel enumeration explodes on large defs — I-006
 - **F-007** selector behind gristmill on ADC2/EOM — ADC2 mechanism verified
-- **F-016** model error untracked on held-out — calibration owned by M1
+- **F-016** model error untracked on held-out — calibration owned by M1;
+  new v2 gap classes (k-heavy low-rank-out, lincomb rank-6) logged
 - **F-017** CCSD(T) memory: HARD blocker, no full-size reruns
 
 Entries below are in rough filing order, not priority order; the two
@@ -39,7 +39,7 @@ study (archive/RESEARCH-v1.md, tag `hl-study-final`).
 - fix: one projected representative per symmetry component
 - regression: `harness check` on gristmill candidates
 
-## F-004 cost model blind to high-rank slow path [OPEN — mechanism sharpened by calibration; model v2 pending]
+## F-004 cost model blind to high-rank slow path [CLOSED — model v2 priced the reduction regime; CI gate in place]
 - symptom: ccsd_t candidate predicted 0.41 s, measured 8.1 s (20x error);
   model-only acceptance shipped a schedule SLOWER than naive
 - mechanism (v2, VERIFIED by the M1.1 calibration grid,
@@ -60,10 +60,29 @@ study (archive/RESEARCH-v1.md, tag `hl-study-final`).
 - original mechanism note (superseded in kind, not in direction): binary
   clean/slow GEMM classification too coarse; rank-6 intermediate-forming
   ops run at ~0.6 GF/s.
-- planned fix (M1, remaining): cost model v2 prices the reduction class
-  separately (rate table from calibrate-v1, thread-flat), keeps the
-  clean/slow GEMM classes for matricizable steps; model-vs-measured CI
-  gate at 2x; model-only acceptance restricted to in-envelope ops.
+- fix (landed 0b44e61): cost model v2. Steps with output rank 0/1 price at
+  the measured reduction rates (0.09 aligned / 0.04 strided / 0.05 rank-1-out
+  GF/s t1, thread-flat; 0.006 GF/s t16 rank-1-out, unstable regime priced
+  pessimistically); pure batched multiplies (m=n=1) are bandwidth-priced;
+  rank>=5 steps use bw_hi (0.75/6.5 GB/s t1/t16) plus a measured 1.3 ms
+  per-step fixed overhead; GEMM anchors recalibrated from
+  profiles/calibrate-v1.json (57.7/255.3 clean, 23.0/153.0 slow).
+- regression: `harness model-ci` (pure model evaluation against the
+  committed calibration grid; no timing) + cargo test
+  `model_v2_within_2x_of_calibration_grid`. Three exceptions documented
+  with reasons in MODEL_CI_EXCEPTIONS (bin_r6_out1 t16 unstable;
+  tern_lowrank_control small-m dispatch; quad_r6_scalar t16 3.9x session
+  variance).
+- acceptance: MET. ccsd_t_struct at (4,8): worst einsum ratio was 110x,
+  now within [0.40x, 1.41x]. Residual gaps (rank-6 lincomb 10-17x,
+  k-heavy low-rank-out contractions 26-500x) are newly surfaced PRE-EXISTING
+  v1 holes, not v2 regressions — tracked in F-016.
+- side effect (recorded, trials/model-v2.jsonl): v2 repricing converges the
+  CCD selector at step 0 -> Axis-1 baseline fallback. The archived
+  v1-era selected schedule scores worse than baseline under v2 (0.831 vs
+  0.708 s predicted); exam-grade CCD measurement was ~parity (0.996x t1),
+  so the measured cost of the fallback is ~zero. Whether v2 misranks these
+  is milestone evidence, not tuned against.
 - exposing case: ccsd_t structural-proposer candidate (trials-v1/struct_all.jsonl);
   ADC2 selected-vs-gristmill gap underprediction (F-016); calibrate cases
   tern_r6_scalar / bin_r6_out1 / dot_r2_scalar.
@@ -156,6 +175,11 @@ study (archive/RESEARCH-v1.md, tag `hl-study-final`).
   and 0.7822403455 s terminal prediction; final emission uses the F-018
   baseline fallback because that schedule still exceeds Axis 1. Permanent
   default-threshold unit test + numerical oracle on the emitted baseline.
+  NOTE (model v2, 0b44e61): the nine-step trace was produced under v1
+  pricing; under v2 rates the CCD selector converges at step 0 and emits
+  the baseline fallback directly (trials/model-v2.jsonl). The structural
+  fix (split threshold aligned with kernel envelope) stands; the trace
+  claim is historical to v1 pricing.
 
 ## F-009 MP3 selected schedule fails the numerical oracle [CLOSED]
 - symptom: protected milestone Axis 0 stopped on `mp3_selected`: exact
@@ -458,6 +482,18 @@ study (archive/RESEARCH-v1.md, tag `hl-study-final`).
   margin: measured CCD/CCSD Axis-1 failure forced retirement.
   No held-out calibration or parameter tuning is permitted; evaluate model v2
   on this case only at a milestone.
+- model v2 status (0b44e61): the F-004 reduction-class hole is closed and
+  CI-gated (model-ci, 2x, exceptions documented). Newly surfaced PRE-EXISTING
+  gap classes, measured on the train corpus at (8,40) t1 (diagnostic-grade,
+  trials/model-v2.jsonl): (a) k-heavy low-rank-output contractions
+  (ccsd_gristmill op#19 "ab,bacd->cd") achieve 0.26 GF/s — 500x under-
+  predicted; (b) single-k rank-4-output contractions (op#23 "ab,cdae->bcde")
+  achieve 0.9 GF/s — 26x under-predicted; (c) rank-6 lincomb ops carry
+  ~0.3-0.5 ms fixed overhead the dispatch floor misses (10-17x at tiny size,
+  ~5% of ccsd_t_struct time). Per-op spearman on ccsd_gristmill is 0.37
+  (n=115, dispatch-floor-dominated); the prequel's rho ~0.93 was measured on
+  different fixtures — not asserted comparable. Next M1 work: extend the
+  calibration grid with classes (a)-(c), then price them.
 
 ## F-017 CCSD(T) exam blocked by harness 6 GB limit below the 14 GB regime [OPEN]
 - symptom: the a8bf146 protected exam reached ccsd_t gristmill t1 and stopped
