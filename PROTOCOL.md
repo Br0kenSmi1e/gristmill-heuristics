@@ -13,6 +13,9 @@ named spec gap. Never "improve the metric" in the abstract.
 
 1. SELECT — the highest-priority open F-entry, or the next scheduled item.
 2. REPRODUCE — pin a minimal failing test/fixture FIRST. No fixture, no fix.
+   For performance/correctness diagnosis, the fixture is `harness report`
+   output: run it before anything else. Writing new instrumentation before
+   reading the panel is a protocol violation.
 3. DIAGNOSE — verify the mechanism (profile, trace, per-op diff) and record
    it in the F-entry BEFORE attempting the fix. Then the mechanism chooses
    the fix type: if engineering, apply it; if algorithmic, file an I-entry
