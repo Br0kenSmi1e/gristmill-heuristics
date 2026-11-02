@@ -1,0 +1,158 @@
+=== report: eom_ccsd / eom_ccsd_gristmill ===
+sizes {0: 16, 1: 64}  threads 1  total 978.8 ms  (sum of op medians 928.8 ms)
+peak-memory estimate: 425 MB
+
+top ops by measured time (vs model):
+  op#159  einsum      165.90 ms (17.9%)  model    142.22 ms
+  op#32   einsum       87.24 ms ( 9.4%)  model     23.86 ms  MODEL-MISS
+  op#113  einsum       41.98 ms ( 4.5%)  model     95.44 ms  MODEL-MISS
+  op#118  einsum       41.09 ms ( 4.4%)  model     95.44 ms  MODEL-MISS
+  op#112  einsum       40.79 ms ( 4.4%)  model     95.44 ms  MODEL-MISS
+  op#72   einsum       39.52 ms ( 4.3%)  model     37.05 ms
+  op#61   einsum       38.25 ms ( 4.1%)  model     35.55 ms
+  op#172  lincomb      23.41 ms ( 2.5%)  model    119.84 ms  MODEL-MISS
+  op#148  einsum       14.17 ms ( 1.5%)  model      5.97 ms  MODEL-MISS
+  op#170  einsum       13.04 ms ( 1.4%)  model      8.89 ms
+  op#40   einsum       12.88 ms ( 1.4%)  model      8.89 ms
+  op#0    einsum       12.49 ms ( 1.3%)  model      0.37 ms  MODEL-MISS
+  op#60   lincomb      12.37 ms ( 1.3%)  model     56.92 ms  MODEL-MISS
+  op#28   einsum       12.30 ms ( 1.3%)  model      0.37 ms  MODEL-MISS
+  op#102  lincomb      12.21 ms ( 1.3%)  model     56.92 ms  MODEL-MISS
+  ... +158 ops aggregated: 361.1 ms
+
+model-miss outliers (|measured/model| outside [0.5, 2], any size):
+  op#32   einsum   measured    87.24 ms  model    23.86 ms  ratio  3.66x
+  op#113  einsum   measured    41.98 ms  model    95.44 ms  ratio  0.44x
+  op#118  einsum   measured    41.09 ms  model    95.44 ms  ratio  0.43x
+  op#112  einsum   measured    40.79 ms  model    95.44 ms  ratio  0.43x
+  op#172  lincomb  measured    23.41 ms  model   119.84 ms  ratio  0.20x
+  op#148  einsum   measured    14.17 ms  model     5.97 ms  ratio  2.38x
+  op#0    einsum   measured    12.49 ms  model     0.37 ms  ratio 33.51x
+  op#60   lincomb  measured    12.37 ms  model    56.92 ms  ratio  0.22x
+  op#28   einsum   measured    12.30 ms  model     0.37 ms  ratio 32.99x
+  op#102  lincomb  measured    12.21 ms  model    56.92 ms  ratio  0.21x
+  op#121  einsum   measured    10.93 ms  model    23.86 ms  ratio  0.46x
+  op#143  lincomb  measured    10.81 ms  model    47.93 ms  ratio  0.23x
+  op#120  einsum   measured    10.64 ms  model    25.36 ms  ratio  0.42x
+  op#128  einsum   measured    10.48 ms  model    23.86 ms  ratio  0.44x
+  op#117  lincomb  measured     7.95 ms  model    29.96 ms  ratio  0.27x
+  op#147  lincomb  measured     7.92 ms  model    20.97 ms  ratio  0.38x
+  op#110  lincomb  measured     7.83 ms  model    29.96 ms  ratio  0.26x
+  op#135  lincomb  measured     6.12 ms  model    20.97 ms  ratio  0.29x
+  op#160  einsum   measured     6.11 ms  model     0.03 ms  ratio 203.74x
+  op#163  einsum   measured     5.93 ms  model     0.03 ms  ratio 197.69x
+  op#161  einsum   measured     5.80 ms  model     0.03 ms  ratio 193.25x
+  op#55   einsum   measured     5.51 ms  model     0.03 ms  ratio 183.68x
+  op#99   einsum   measured     5.42 ms  model     0.03 ms  ratio 180.82x
+  op#56   einsum   measured     5.40 ms  model     0.03 ms  ratio 180.00x
+  op#169  einsum   measured     5.25 ms  model     0.03 ms  ratio 175.07x
+  op#100  einsum   measured     4.90 ms  model     0.03 ms  ratio 163.44x
+  op#101  einsum   measured     4.88 ms  model     0.03 ms  ratio 162.52x
+  op#114  einsum   measured     4.78 ms  model     0.03 ms  ratio 159.30x
+  op#166  einsum   measured     4.71 ms  model     0.03 ms  ratio 157.10x
+  op#162  einsum   measured     4.64 ms  model     0.03 ms  ratio 154.78x
+  op#58   einsum   measured     4.57 ms  model     0.03 ms  ratio 152.35x
+  op#59   einsum   measured     4.52 ms  model     0.03 ms  ratio 150.65x
+  op#165  einsum   measured     4.33 ms  model     0.03 ms  ratio 144.46x
+  op#141  einsum   measured     4.31 ms  model     0.03 ms  ratio 143.52x
+  op#108  einsum   measured     4.29 ms  model     0.03 ms  ratio 142.97x
+  op#139  einsum   measured     4.28 ms  model     0.03 ms  ratio 142.82x
+  op#107  einsum   measured     4.26 ms  model     0.03 ms  ratio 141.90x
+  op#134  einsum   measured     4.25 ms  model     0.03 ms  ratio 141.67x
+  op#54   einsum   measured     4.10 ms  model     0.03 ms  ratio 136.75x
+  op#146  einsum   measured     3.20 ms  model     0.03 ms  ratio 92.19x
+  op#62   einsum   measured     3.05 ms  model     6.55 ms  ratio  0.47x
+  op#137  einsum   measured     3.01 ms  model     7.48 ms  ratio  0.40x
+  op#167  einsum   measured     2.33 ms  model     0.03 ms  ratio 77.62x
+  op#145  einsum   measured     1.94 ms  model     0.03 ms  ratio 64.75x
+  op#97   einsum   measured     1.93 ms  model     0.03 ms  ratio 64.18x
+  op#142  einsum   measured     1.89 ms  model     0.03 ms  ratio 62.86x
+  op#115  einsum   measured     1.88 ms  model     0.03 ms  ratio 62.76x
+  op#96   einsum   measured     1.83 ms  model     0.03 ms  ratio 61.01x
+  op#140  einsum   measured     1.82 ms  model     0.03 ms  ratio 60.77x
+  op#151  einsum   measured     1.64 ms  model     0.09 ms  ratio 17.62x
+  op#164  einsum   measured     1.55 ms  model     0.03 ms  ratio 51.82x
+  op#133  einsum   measured     1.49 ms  model     0.03 ms  ratio 49.76x
+  op#7    einsum   measured     1.46 ms  model     0.09 ms  ratio 15.69x
+  op#109  einsum   measured     1.39 ms  model     0.03 ms  ratio 46.28x
+  op#1    einsum   measured     1.34 ms  model     0.09 ms  ratio 14.41x
+  op#138  einsum   measured     1.24 ms  model     0.03 ms  ratio 41.45x
+  op#57   einsum   measured     1.19 ms  model     0.03 ms  ratio 39.69x
+  op#168  einsum   measured     1.17 ms  model     0.03 ms  ratio 38.93x
+  op#116  einsum   measured     1.12 ms  model     0.03 ms  ratio 37.19x
+  op#75   einsum   measured     0.99 ms  model     2.05 ms  ratio  0.48x
+  op#88   lincomb  measured     0.92 ms  model    11.98 ms  ratio  0.08x
+  op#154  einsum   measured     0.77 ms  model     0.09 ms  ratio  8.31x
+  op#36   einsum   measured     0.66 ms  model     0.03 ms  ratio 22.02x
+  op#127  einsum   measured     0.64 ms  model     1.49 ms  ratio  0.43x
+  op#5    einsum   measured     0.53 ms  model     0.03 ms  ratio 17.70x
+  op#98   einsum   measured     0.52 ms  model     0.03 ms  ratio 17.41x
+  op#125  lincomb  measured     0.52 ms  model     7.49 ms  ratio  0.07x
+  op#119  einsum   measured     0.47 ms  model     0.14 ms  ratio  3.36x
+  op#122  einsum   measured     0.46 ms  model     0.03 ms  ratio 15.42x
+  op#92   einsum   measured     0.40 ms  model     0.03 ms  ratio 13.30x
+  op#94   lincomb  measured     0.39 ms  model     5.24 ms  ratio  0.07x
+  op#83   einsum   measured     0.38 ms  model     0.03 ms  ratio 12.75x
+  op#85   einsum   measured     0.38 ms  model     0.03 ms  ratio 12.70x
+  op#86   einsum   measured     0.37 ms  model     0.03 ms  ratio 12.31x
+  op#129  einsum   measured     0.36 ms  model     0.03 ms  ratio 11.93x
+  op#6    lincomb  measured     0.35 ms  model     5.24 ms  ratio  0.07x
+  op#124  einsum   measured     0.34 ms  model     0.03 ms  ratio 11.20x
+  op#131  lincomb  measured     0.31 ms  model     5.24 ms  ratio  0.06x
+  op#130  einsum   measured     0.31 ms  model     0.03 ms  ratio 10.31x
+  op#77   einsum   measured     0.31 ms  model     0.75 ms  ratio  0.41x
+  op#38   lincomb  measured     0.29 ms  model     5.24 ms  ratio  0.05x
+  op#37   einsum   measured     0.28 ms  model     0.03 ms  ratio  9.20x
+  op#87   einsum   measured     0.27 ms  model     0.03 ms  ratio  8.94x
+  op#11   einsum   measured     0.26 ms  model     0.03 ms  ratio  8.73x
+  op#19   einsum   measured     0.24 ms  model     0.03 ms  ratio  8.05x
+  op#4    einsum   measured     0.24 ms  model     0.03 ms  ratio  7.97x
+  op#93   einsum   measured     0.24 ms  model     0.03 ms  ratio  7.86x
+  op#84   einsum   measured     0.20 ms  model     0.03 ms  ratio  6.57x
+  op#150  einsum   measured     0.17 ms  model     0.03 ms  ratio  4.81x
+  op#81   lincomb  measured     0.12 ms  model     1.87 ms  ratio  0.06x
+  op#78   einsum   measured     0.12 ms  model     0.03 ms  ratio  3.84x
+  op#80   einsum   measured     0.09 ms  model     0.03 ms  ratio  2.93x
+  op#123  einsum   measured     0.08 ms  model     0.03 ms  ratio  2.73x
+  op#79   einsum   measured     0.07 ms  model     0.03 ms  ratio  2.30x
+  op#70   lincomb  measured     0.02 ms  model     0.12 ms  ratio  0.18x
+  op#155  einsum   measured     0.01 ms  model     0.03 ms  ratio  0.49x
+  op#156  einsum   measured     0.01 ms  model     0.03 ms  ratio  0.49x
+  op#21   einsum   measured     0.01 ms  model     0.03 ms  ratio  0.49x
+  op#13   einsum   measured     0.01 ms  model     0.03 ms  ratio  0.49x
+  op#68   einsum   measured     0.01 ms  model     0.03 ms  ratio  0.49x
+  op#22   einsum   measured     0.01 ms  model     0.03 ms  ratio  0.49x
+  op#31   lincomb  measured     0.01 ms  model     0.08 ms  ratio  0.17x
+  op#30   einsum   measured     0.01 ms  model     0.03 ms  ratio  0.47x
+  op#67   einsum   measured     0.01 ms  model     0.03 ms  ratio  0.46x
+  op#44   lincomb  measured     0.01 ms  model     0.03 ms  ratio  0.42x
+  op#69   einsum   measured     0.01 ms  model     0.03 ms  ratio  0.37x
+  op#14   einsum   measured     0.01 ms  model     0.03 ms  ratio  0.37x
+  op#47   einsum   measured     0.01 ms  model     0.03 ms  ratio  0.36x
+  op#15   einsum   measured     0.01 ms  model     0.03 ms  ratio  0.36x
+  op#23   einsum   measured     0.01 ms  model     0.03 ms  ratio  0.35x
+  op#17   einsum   measured     0.01 ms  model     0.03 ms  ratio  0.35x
+  op#26   einsum   measured     0.01 ms  model     0.03 ms  ratio  0.35x
+  op#25   einsum   measured     0.01 ms  model     0.03 ms  ratio  0.35x
+  op#43   einsum   measured     0.01 ms  model     0.03 ms  ratio  0.33x
+  op#10   lincomb  measured     0.01 ms  model     0.03 ms  ratio  0.32x
+  op#41   einsum   measured     0.01 ms  model     0.03 ms  ratio  0.31x
+  op#52   lincomb  measured     0.01 ms  model     0.03 ms  ratio  0.25x
+  op#48   lincomb  measured     0.01 ms  model     0.03 ms  ratio  0.24x
+  op#29   einsum   measured     0.00 ms  model     0.03 ms  ratio  0.06x
+  op#24   einsum   measured     0.00 ms  model     0.03 ms  ratio  0.06x
+  op#16   einsum   measured     0.00 ms  model     0.03 ms  ratio  0.06x
+  op#8    einsum   measured     0.00 ms  model     0.03 ms  ratio  0.04x
+  op#9    einsum   measured     0.00 ms  model     0.03 ms  ratio  0.04x
+  op#46   einsum   measured     0.00 ms  model     0.03 ms  ratio  0.04x
+  op#50   einsum   measured     0.00 ms  model     0.03 ms  ratio  0.04x
+  op#51   einsum   measured     0.00 ms  model     0.03 ms  ratio  0.04x
+  op#42   einsum   measured     0.00 ms  model     0.03 ms  ratio  0.03x
+
+category totals:
+  einsum        837.09 ms (90.1%)
+  lincomb        91.69 ms ( 9.9%)
+
+concentration: top-1 op 17.9%, top-5 ops 40.6%
+
+validity: iters 10 warmup 3 protocol-OK  load 4.03  git 6f7d4f1  checksum 13923498.517

@@ -1,0 +1,233 @@
+{
+  "candidate": "adc2_gristmill",
+  "categories": {
+    "einsum": 26.007870000000008,
+    "lincomb": 23.264423
+  },
+  "checksum": 13994400.188080337,
+  "date": "unix:1793596676",
+  "digest": "b497601ab4bb7144:6304",
+  "git": "6f7d4f1",
+  "iters": 10,
+  "kind": "report",
+  "load": 4.03,
+  "ops": [
+    {
+      "kind": "einsum",
+      "median_ms": 0.117355,
+      "model_ms": 0.04,
+      "value": 0
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.121087,
+      "model_ms": 0.04,
+      "value": 1
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.141178,
+      "model_ms": 0.15203639329406435,
+      "value": 2
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.144243,
+      "model_ms": 0.15203639329406435,
+      "value": 3
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 2.75726,
+      "model_ms": 0.21223549652118912,
+      "value": 4
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.02674,
+      "model_ms": 0.04,
+      "value": 5
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.001007,
+      "model_ms": 0.04,
+      "value": 6
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.01081,
+      "model_ms": 0.04,
+      "value": 7
+    },
+    {
+      "kind": "lincomb",
+      "median_ms": 0.019787,
+      "model_ms": 0.04,
+      "value": 8
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 1.052033,
+      "model_ms": 0.21223549652118912,
+      "value": 9
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.646009,
+      "model_ms": 0.8489419860847565,
+      "value": 10
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 1.257756,
+      "model_ms": 0.04,
+      "value": 11
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 2.343375,
+      "model_ms": 0.04,
+      "value": 12
+    },
+    {
+      "kind": "lincomb",
+      "median_ms": 6.061673,
+      "model_ms": 14.322013658536585,
+      "value": 13
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.44815900000000003,
+      "model_ms": 0.15203639329406435,
+      "value": 14
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 1.017319,
+      "model_ms": 0.6081455731762574,
+      "value": 15
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 1.4345759999999999,
+      "model_ms": 0.04,
+      "value": 16
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.954159,
+      "model_ms": 0.04,
+      "value": 17
+    },
+    {
+      "kind": "lincomb",
+      "median_ms": 6.118112999999999,
+      "model_ms": 14.322013658536585,
+      "value": 18
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.073963,
+      "model_ms": 0.04,
+      "value": 19
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.144622,
+      "model_ms": 0.04,
+      "value": 20
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.143518,
+      "model_ms": 0.04,
+      "value": 21
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.637508,
+      "model_ms": 0.21223549652118912,
+      "value": 22
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.637471,
+      "model_ms": 0.21223549652118912,
+      "value": 23
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.5887089999999999,
+      "model_ms": 0.04,
+      "value": 24
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 1.369929,
+      "model_ms": 0.21223549652118912,
+      "value": 25
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 3.310572,
+      "model_ms": 0.8489419860847565,
+      "value": 26
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.054929000000000006,
+      "model_ms": 0.04,
+      "value": 27
+    },
+    {
+      "kind": "lincomb",
+      "median_ms": 0.113911,
+      "model_ms": 0.05594536585365854,
+      "value": 28
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 1.659936,
+      "model_ms": 0.04,
+      "value": 29
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 1.6781350000000002,
+      "model_ms": 0.04,
+      "value": 30
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 1.5109819999999998,
+      "model_ms": 0.04,
+      "value": 31
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 1.72453,
+      "model_ms": 0.04,
+      "value": 32
+    },
+    {
+      "kind": "lincomb",
+      "median_ms": 10.950939,
+      "model_ms": 26.59802536585366,
+      "value": 33
+    }
+  ],
+  "opsum_ms": 49.272293000000005,
+  "peak_mb": 98,
+  "problem": "adc2",
+  "protocol_ok": true,
+  "sizes": {
+    "0": 16,
+    "1": 64
+  },
+  "threads": 16,
+  "top1_share": 0.2222534883854502,
+  "top5_share": 0.59259586315579,
+  "total_ms": 77.86643,
+  "warmup": 3
+}

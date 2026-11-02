@@ -1,0 +1,58 @@
+=== report: ccd / ccd_gristmill ===
+sizes {0: 16, 1: 64}  threads 16  total 149.6 ms  (sum of op medians 130.9 ms)
+peak-memory estimate: 288 MB
+
+top ops by measured time (vs model):
+  op#18   einsum       30.28 ms (23.1%)  model     38.92 ms
+  op#30   lincomb      20.07 ms (15.3%)  model     81.84 ms  MODEL-MISS
+  op#10   einsum        8.67 ms ( 6.6%)  model     17.68 ms  MODEL-MISS
+  op#4    einsum        8.47 ms ( 6.5%)  model     17.68 ms  MODEL-MISS
+  op#3    einsum        8.20 ms ( 6.3%)  model     17.68 ms  MODEL-MISS
+  op#8    lincomb       7.35 ms ( 5.6%)  model     20.46 ms  MODEL-MISS
+  op#2    einsum        4.54 ms ( 3.5%)  model      4.94 ms
+  op#14   einsum        3.47 ms ( 2.6%)  model      2.43 ms
+  op#1    einsum        2.77 ms ( 2.1%)  model      0.85 ms  MODEL-MISS
+  op#29   einsum        2.76 ms ( 2.1%)  model      3.40 ms
+  op#11   einsum        2.73 ms ( 2.1%)  model      0.21 ms  MODEL-MISS
+  op#21   einsum        2.62 ms ( 2.0%)  model      0.04 ms  MODEL-MISS
+  op#26   einsum        2.44 ms ( 1.9%)  model      0.04 ms  MODEL-MISS
+  op#20   einsum        2.31 ms ( 1.8%)  model      0.04 ms  MODEL-MISS
+  op#12   einsum        2.10 ms ( 1.6%)  model      4.30 ms  MODEL-MISS
+  ... +16 ops aggregated: 22.1 ms
+
+model-miss outliers (|measured/model| outside [0.5, 2], any size):
+  op#30   lincomb  measured    20.07 ms  model    81.84 ms  ratio  0.25x
+  op#10   einsum   measured     8.67 ms  model    17.68 ms  ratio  0.49x
+  op#4    einsum   measured     8.47 ms  model    17.68 ms  ratio  0.48x
+  op#3    einsum   measured     8.20 ms  model    17.68 ms  ratio  0.46x
+  op#8    lincomb  measured     7.35 ms  model    20.46 ms  ratio  0.36x
+  op#1    einsum   measured     2.77 ms  model     0.85 ms  ratio  3.27x
+  op#11   einsum   measured     2.73 ms  model     0.21 ms  ratio 12.86x
+  op#21   einsum   measured     2.62 ms  model     0.04 ms  ratio 65.62x
+  op#26   einsum   measured     2.44 ms  model     0.04 ms  ratio 60.95x
+  op#20   einsum   measured     2.31 ms  model     0.04 ms  ratio 57.86x
+  op#12   einsum   measured     2.10 ms  model     4.30 ms  ratio  0.49x
+  op#7    einsum   measured     2.10 ms  model     0.04 ms  ratio 52.50x
+  op#23   einsum   measured     2.08 ms  model     0.04 ms  ratio 51.96x
+  op#27   einsum   measured     2.06 ms  model     0.04 ms  ratio 51.61x
+  op#19   einsum   measured     2.04 ms  model     0.04 ms  ratio 50.90x
+  op#0    einsum   measured     2.02 ms  model     4.94 ms  ratio  0.41x
+  op#28   einsum   measured     1.98 ms  model     0.04 ms  ratio 49.57x
+  op#5    einsum   measured     1.89 ms  model     0.04 ms  ratio 47.20x
+  op#16   einsum   measured     1.76 ms  model     0.04 ms  ratio 44.04x
+  op#9    einsum   measured     1.72 ms  model     0.21 ms  ratio  8.13x
+  op#24   einsum   measured     1.04 ms  model     0.04 ms  ratio 25.89x
+  op#22   einsum   measured     0.95 ms  model     0.04 ms  ratio 23.66x
+  op#17   einsum   measured     0.94 ms  model     0.04 ms  ratio 23.45x
+  op#25   einsum   measured     0.90 ms  model     0.04 ms  ratio 22.38x
+  op#6    einsum   measured     0.40 ms  model     0.04 ms  ratio 10.10x
+  op#15   lincomb  measured     0.14 ms  model     0.90 ms  ratio  0.15x
+  op#13   einsum   measured     0.13 ms  model     0.04 ms  ratio  3.13x
+
+category totals:
+  einsum        103.38 ms (79.0%)
+  lincomb        27.56 ms (21.0%)
+
+concentration: top-1 op 23.1%, top-5 ops 57.8%
+
+validity: iters 10 warmup 3 protocol-OK  load 1.46  git 6f7d4f1  checksum 13672925.303

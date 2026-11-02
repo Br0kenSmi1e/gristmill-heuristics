@@ -1,0 +1,71 @@
+{
+  "candidate": "mp3_gristmill",
+  "categories": {
+    "einsum": 227.085851,
+    "lincomb": 2.2603349999999995
+  },
+  "checksum": 67.7788945067351,
+  "date": "unix:1793596835",
+  "digest": "8817b417c2d1e94b:1491",
+  "git": "6f7d4f1",
+  "iters": 10,
+  "kind": "report",
+  "load": 4.82,
+  "ops": [
+    {
+      "kind": "einsum",
+      "median_ms": 12.867685,
+      "model_ms": 24.30486296999895,
+      "value": 0
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 44.159309,
+      "model_ms": 101.47030160563439,
+      "value": 1
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 167.15817099999998,
+      "model_ms": 148.2440440491958,
+      "value": 2
+    },
+    {
+      "kind": "lincomb",
+      "median_ms": 2.2541409999999997,
+      "model_ms": 20.97152,
+      "value": 3
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.070725,
+      "model_ms": 0.030000000000000002,
+      "value": 4
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 2.8299610000000004,
+      "model_ms": 0.12792781515820456,
+      "value": 5
+    },
+    {
+      "kind": "lincomb",
+      "median_ms": 0.006194000000000001,
+      "model_ms": 0.030000000000000002,
+      "value": 6
+    }
+  ],
+  "opsum_ms": 229.346186,
+  "peak_mb": 193,
+  "problem": "mp3",
+  "protocol_ok": true,
+  "sizes": {
+    "0": 16,
+    "1": 64
+  },
+  "threads": 1,
+  "top1_share": 0.7288465263599369,
+  "top5_share": 0.9996646161798391,
+  "total_ms": 233.050286,
+  "warmup": 3
+}

@@ -1866,8 +1866,15 @@ fn cmd_report(
     let tensor_blocks = interp::to_tensor_blocks_permuted(&blocks.permuted)?;
     let est = interp::estimate_memory(&program, &tensor_blocks, &problem.sizes, 1 << 30);
     let peak_mb = est.peak_live_bytes / (1 << 20);
-    if !est.risky_ops.is_empty() || peak_mb > 6000 {
-        anyhow::bail!("memory guard tripped: {:?}", est.risky_ops);
+    if !est.risky_ops.is_empty() {
+        eprintln!(
+            "WARNING: {} n-ary einsums with >1GB union intermediates: {:?}",
+            est.risky_ops.len(),
+            est.risky_ops
+        );
+    }
+    if peak_mb > 6000 {
+        anyhow::bail!("memory guard tripped: peak {peak_mb} MB");
     }
 
     let rates = costmodel::rates_for_threads(threads);

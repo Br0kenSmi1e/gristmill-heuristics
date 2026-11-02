@@ -1,0 +1,28 @@
+=== report: mp3 / mp3_gristmill ===
+sizes {0: 16, 1: 64}  threads 1  total 233.1 ms  (sum of op medians 229.3 ms)
+peak-memory estimate: 193 MB
+
+top ops by measured time (vs model):
+  op#2    einsum      167.16 ms (72.9%)  model    148.24 ms
+  op#1    einsum       44.16 ms (19.3%)  model    101.47 ms  MODEL-MISS
+  op#0    einsum       12.87 ms ( 5.6%)  model     24.30 ms
+  op#5    einsum        2.83 ms ( 1.2%)  model      0.13 ms  MODEL-MISS
+  op#3    lincomb       2.25 ms ( 1.0%)  model     20.97 ms  MODEL-MISS
+  op#4    einsum        0.07 ms ( 0.0%)  model      0.03 ms  MODEL-MISS
+  op#6    lincomb       0.01 ms ( 0.0%)  model      0.03 ms  MODEL-MISS
+  ... +0 ops aggregated: -0.0 ms
+
+model-miss outliers (|measured/model| outside [0.5, 2], any size):
+  op#1    einsum   measured    44.16 ms  model   101.47 ms  ratio  0.44x
+  op#5    einsum   measured     2.83 ms  model     0.13 ms  ratio 22.12x
+  op#3    lincomb  measured     2.25 ms  model    20.97 ms  ratio  0.11x
+  op#4    einsum   measured     0.07 ms  model     0.03 ms  ratio  2.36x
+  op#6    lincomb  measured     0.01 ms  model     0.03 ms  ratio  0.21x
+
+category totals:
+  einsum        227.09 ms (99.0%)
+  lincomb         2.26 ms ( 1.0%)
+
+concentration: top-1 op 72.9%, top-5 ops 100.0%
+
+validity: iters 10 warmup 3 protocol-OK  load 4.82  git 6f7d4f1  checksum 67.779

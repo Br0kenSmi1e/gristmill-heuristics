@@ -1,0 +1,581 @@
+{
+  "candidate": "ccsd_lambda_gristmill",
+  "categories": {
+    "einsum": 591.651469,
+    "lincomb": 72.08155199999999
+  },
+  "checksum": 14475214.62520835,
+  "date": "unix:1793596659",
+  "digest": "e6ac483d10ea948d:17453",
+  "git": "6f7d4f1",
+  "iters": 10,
+  "kind": "report",
+  "load": 4.58,
+  "ops": [
+    {
+      "kind": "einsum",
+      "median_ms": 2.138886,
+      "model_ms": 2.989273803174603,
+      "value": 0
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 1.535248,
+      "model_ms": 0.09320675555555555,
+      "value": 1
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.007169,
+      "model_ms": 0.030000000000000002,
+      "value": 2
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.008785,
+      "model_ms": 0.030000000000000002,
+      "value": 3
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 10.838119,
+      "model_ms": 23.86092942222222,
+      "value": 4
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.223524,
+      "model_ms": 0.3728270222222222,
+      "value": 5
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 4.955899,
+      "model_ms": 5.965232355555555,
+      "value": 6
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 40.293507,
+      "model_ms": 95.44371768888888,
+      "value": 7
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 5.883168,
+      "model_ms": 5.965232355555555,
+      "value": 8
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 1.3047250000000001,
+      "model_ms": 1.4913080888888888,
+      "value": 9
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.310352,
+      "model_ms": 0.030000000000000002,
+      "value": 10
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.425122,
+      "model_ms": 0.030000000000000002,
+      "value": 11
+    },
+    {
+      "kind": "lincomb",
+      "median_ms": 0.269481,
+      "model_ms": 5.24288,
+      "value": 12
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.001072,
+      "model_ms": 0.030000000000000002,
+      "value": 13
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.0009760000000000001,
+      "model_ms": 0.030000000000000002,
+      "value": 14
+    },
+    {
+      "kind": "lincomb",
+      "median_ms": 0.007794000000000001,
+      "model_ms": 0.030000000000000002,
+      "value": 15
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 2.709459,
+      "model_ms": 0.030000000000000002,
+      "value": 16
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 3.293391,
+      "model_ms": 0.030000000000000002,
+      "value": 17
+    },
+    {
+      "kind": "lincomb",
+      "median_ms": 5.872102,
+      "model_ms": 20.97152,
+      "value": 18
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 9.934596,
+      "model_ms": 8.888591258278145,
+      "value": 19
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.575098,
+      "model_ms": 0.030000000000000002,
+      "value": 20
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.267964,
+      "model_ms": 0.030000000000000002,
+      "value": 21
+    },
+    {
+      "kind": "lincomb",
+      "median_ms": 0.28531500000000004,
+      "model_ms": 5.24288,
+      "value": 22
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.226722,
+      "model_ms": 0.3728270222222222,
+      "value": 23
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.125106,
+      "model_ms": 0.030000000000000002,
+      "value": 24
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.124674,
+      "model_ms": 0.030000000000000002,
+      "value": 25
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.12252699999999998,
+      "model_ms": 0.030000000000000002,
+      "value": 26
+    },
+    {
+      "kind": "lincomb",
+      "median_ms": 0.118314,
+      "model_ms": 1.8724571428571428,
+      "value": 27
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.400388,
+      "model_ms": 0.030000000000000002,
+      "value": 28
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 38.631634,
+      "model_ms": 35.55436503311258,
+      "value": 29
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 10.848880999999999,
+      "model_ms": 23.86092942222222,
+      "value": 30
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.838773,
+      "model_ms": 0.5555369536423841,
+      "value": 31
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 1.233352,
+      "model_ms": 1.4913080888888888,
+      "value": 32
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.36479999999999996,
+      "model_ms": 0.13888423841059602,
+      "value": 33
+    },
+    {
+      "kind": "lincomb",
+      "median_ms": 2.171986,
+      "model_ms": 14.230674285714286,
+      "value": 34
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 42.677429000000004,
+      "model_ms": 0.030000000000000002,
+      "value": 35
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 45.35343,
+      "model_ms": 23.86092942222222,
+      "value": 36
+    },
+    {
+      "kind": "lincomb",
+      "median_ms": 42.848343,
+      "model_ms": 83.88608,
+      "value": 37
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 3.2950850000000003,
+      "model_ms": 1.4913080888888888,
+      "value": 38
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.235571,
+      "model_ms": 0.030000000000000002,
+      "value": 39
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.098816,
+      "model_ms": 0.030000000000000002,
+      "value": 40
+    },
+    {
+      "kind": "lincomb",
+      "median_ms": 0.172152,
+      "model_ms": 1.31072,
+      "value": 41
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 1.638338,
+      "model_ms": 1.4913080888888888,
+      "value": 42
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.24713600000000002,
+      "model_ms": 0.030000000000000002,
+      "value": 43
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 11.042143000000001,
+      "model_ms": 23.86092942222222,
+      "value": 44
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.363967,
+      "model_ms": 0.13888423841059602,
+      "value": 45
+    },
+    {
+      "kind": "lincomb",
+      "median_ms": 1.7173559999999999,
+      "model_ms": 9.736777142857143,
+      "value": 46
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.010199,
+      "model_ms": 0.030000000000000002,
+      "value": 47
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.0010049999999999998,
+      "model_ms": 0.030000000000000002,
+      "value": 48
+    },
+    {
+      "kind": "lincomb",
+      "median_ms": 0.007282,
+      "model_ms": 0.030000000000000002,
+      "value": 49
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.016693,
+      "model_ms": 0.030000000000000002,
+      "value": 50
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 1.507795,
+      "model_ms": 0.09320675555555555,
+      "value": 51
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 1.8614169999999999,
+      "model_ms": 1.4913080888888888,
+      "value": 52
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.01597,
+      "model_ms": 0.030000000000000002,
+      "value": 53
+    },
+    {
+      "kind": "lincomb",
+      "median_ms": 0.030083,
+      "model_ms": 0.038034285714285715,
+      "value": 54
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.00921,
+      "model_ms": 0.030000000000000002,
+      "value": 55
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.125979,
+      "model_ms": 0.030000000000000002,
+      "value": 56
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 2.589077,
+      "model_ms": 1.4913080888888888,
+      "value": 57
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.023575,
+      "model_ms": 0.030000000000000002,
+      "value": 58
+    },
+    {
+      "kind": "lincomb",
+      "median_ms": 0.021207,
+      "model_ms": 0.030000000000000002,
+      "value": 59
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.002157,
+      "model_ms": 0.030000000000000002,
+      "value": 60
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 14.45747,
+      "model_ms": 0.3728270222222222,
+      "value": 61
+    },
+    {
+      "kind": "lincomb",
+      "median_ms": 0.015219,
+      "model_ms": 0.08192,
+      "value": 62
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.147085,
+      "model_ms": 0.030000000000000002,
+      "value": 63
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.11402,
+      "model_ms": 0.030000000000000002,
+      "value": 64
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.139409,
+      "model_ms": 0.030000000000000002,
+      "value": 65
+    },
+    {
+      "kind": "lincomb",
+      "median_ms": 0.165195,
+      "model_ms": 1.8724571428571428,
+      "value": 66
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.0024830000000000004,
+      "model_ms": 0.030000000000000002,
+      "value": 67
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 1.65517,
+      "model_ms": 0.09320675555555555,
+      "value": 68
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 1.994623,
+      "model_ms": 1.4913080888888888,
+      "value": 69
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.037467,
+      "model_ms": 0.030000000000000002,
+      "value": 70
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 14.211269,
+      "model_ms": 0.3728270222222222,
+      "value": 71
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.179152,
+      "model_ms": 0.13888423841059602,
+      "value": 72
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.28219299999999997,
+      "model_ms": 0.3728270222222222,
+      "value": 73
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 14.483592,
+      "model_ms": 0.3728270222222222,
+      "value": 74
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 16.115963,
+      "model_ms": 5.965232355555555,
+      "value": 75
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 2.416668,
+      "model_ms": 1.4913080888888888,
+      "value": 76
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 2.4503239999999997,
+      "model_ms": 1.4913080888888888,
+      "value": 77
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 3.197456,
+      "model_ms": 2.2221478145695364,
+      "value": 78
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 2.206496,
+      "model_ms": 1.4913080888888888,
+      "value": 79
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.631373,
+      "model_ms": 0.09320675555555555,
+      "value": 80
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.19476500000000002,
+      "model_ms": 0.030000000000000002,
+      "value": 81
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.025478,
+      "model_ms": 0.030000000000000002,
+      "value": 82
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.0096,
+      "model_ms": 0.030000000000000002,
+      "value": 83
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.025462000000000002,
+      "model_ms": 0.030000000000000002,
+      "value": 84
+    },
+    {
+      "kind": "lincomb",
+      "median_ms": 0.149219,
+      "model_ms": 0.1609142857142857,
+      "value": 85
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 1.823722,
+      "model_ms": 0.030000000000000002,
+      "value": 86
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 188.683495,
+      "model_ms": 387.76673361269843,
+      "value": 87
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 53.476969,
+      "model_ms": 95.44371768888888,
+      "value": 88
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 11.602713000000001,
+      "model_ms": 23.86092942222222,
+      "value": 89
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 12.348143,
+      "model_ms": 23.86092942222222,
+      "value": 90
+    },
+    {
+      "kind": "lincomb",
+      "median_ms": 18.230504,
+      "model_ms": 47.93490285714286,
+      "value": 91
+    }
+  ],
+  "opsum_ms": 663.733021,
+  "peak_mb": 406,
+  "problem": "ccsd_lambda",
+  "protocol_ok": true,
+  "sizes": {
+    "0": 16,
+    "1": 64
+  },
+  "threads": 1,
+  "top1_share": 0.2842761909234586,
+  "top5_share": 0.5620327062196895,
+  "total_ms": 702.3188580000001,
+  "warmup": 3
+}

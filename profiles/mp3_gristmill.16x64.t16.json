@@ -1,0 +1,71 @@
+{
+  "candidate": "mp3_gristmill",
+  "categories": {
+    "einsum": 52.332702,
+    "lincomb": 5.5071509999999995
+  },
+  "checksum": 67.7788945067351,
+  "date": "unix:1793596839",
+  "digest": "8817b417c2d1e94b:1491",
+  "git": "6f7d4f1",
+  "iters": 10,
+  "kind": "report",
+  "load": 4.31,
+  "ops": [
+    {
+      "kind": "einsum",
+      "median_ms": 3.121851,
+      "model_ms": 3.670522737403223,
+      "value": 0
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 11.133198,
+      "model_ms": 17.68457795437601,
+      "value": 1
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 36.61159,
+      "model_ms": 43.02282286030037,
+      "value": 2
+    },
+    {
+      "kind": "lincomb",
+      "median_ms": 5.496270999999999,
+      "model_ms": 14.322013658536585,
+      "value": 3
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 0.10259,
+      "model_ms": 0.04,
+      "value": 4
+    },
+    {
+      "kind": "einsum",
+      "median_ms": 1.363473,
+      "model_ms": 0.04,
+      "value": 5
+    },
+    {
+      "kind": "lincomb",
+      "median_ms": 0.010879999999999999,
+      "model_ms": 0.04,
+      "value": 6
+    }
+  ],
+  "opsum_ms": 57.839853,
+  "peak_mb": 193,
+  "problem": "mp3",
+  "protocol_ok": true,
+  "sizes": {
+    "0": 16,
+    "1": 64
+  },
+  "threads": 16,
+  "top1_share": 0.6329820720671611,
+  "top5_share": 0.9980382038661129,
+  "total_ms": 62.699144999999994,
+  "warmup": 3
+}
