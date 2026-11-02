@@ -54,6 +54,6 @@ PROTOCOL.md. What is broken: FAILURES.md. What we might try: IDEAS.md.
 ## Next investment
 
 M1: calibration suite (rank/shape/stride/thread grid -> versioned rates
-file) + cost model v2 + model-vs-measured CI + load guard inside the
-timing command. Acceptance: ccsd_t intermediate ops predicted within 2x —
-the exact failure F-004 records.
+file) + cost model v2 + model-vs-measured CI. Load guard inside the
+timing commands is done (F-006, 282577c). Acceptance: ccsd_t intermediate
+ops predicted within 2x — the exact failure F-004 records.

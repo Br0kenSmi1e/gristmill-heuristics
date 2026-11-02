@@ -79,7 +79,10 @@ When fired, the milestone closes in order:
   `tools/gristmill_baseline.py` exports from the identical truthmill
   references. (Learned the hard way: a weaker baseline path once fabricated
   a 1.42x "win". See archive/RESEARCH-v1.md, correction note.)
-- **Load guard.** No benchmark runs when the machine is loaded; check
+- **Load guard.** The timing commands (`time`, `profile`, `cost-check`,
+  `report`, `search`) enforce it: they sample /proc/loadavg at run start,
+  refuse above `--max-load` (default: half of available CPUs), and record
+  load per run; `--allow-loaded` is a recorded override. Still: check
   `uptime` / running jobs first; interleave A/B; median of >=10 after >=3
   warmup; record load in the trial line. A contaminated batch is worse than
   no batch (see F-006).

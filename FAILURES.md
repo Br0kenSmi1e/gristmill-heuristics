@@ -8,12 +8,9 @@ fixture, fix, regression pointer. CLOSED entries are kept for audit
 
 - **F-004** cost model blind to high-rank slow path — M1.1 calibration
 - **F-005** kernel enumeration explodes on large defs — I-006
-- **F-006** benchmark contamination guard — partially structural now
-  (harness report footer records load); runner-level guard pending
 - **F-007** selector behind gristmill on ADC2/EOM — ADC2 mechanism verified
 - **F-016** model error untracked on held-out — calibration owned by M1
 - **F-017** CCSD(T) memory: HARD blocker, no full-size reruns
-- **F-021** structured exam records — mostly done; per-run load pending F-006
 
 Entries below are in rough filing order, not priority order; the two
 "Critic challenges" sections are milestone-review records.
@@ -66,13 +63,24 @@ study (archive/RESEARCH-v1.md, tag `hl-study-final`).
 - exposing case: ccsd_t via `harness search` (kernel path); CCSD 63-term def
   is the safe train proxy for fallback experiments.
 
-## F-006 benchmark contamination by concurrent load [OPEN — structural fix pending]
+## F-006 benchmark contamination by concurrent load [CLOSED — runner-level guard built]
 - symptom: M3-era batches measured under load avg 24 (~20 julia jobs);
   absolute timings invalid, required full re-measurement
 - mechanism: shared machine, no guard; wall-time comparisons silently wrong
-- procedural fix in place (PROTOCOL load guard); structural fix (runner
-  refuses under load, records load in trial line) not built
-- planned fix (M1): load guard inside the timing command itself
+- fix: structural. Every timing command (`time`, `profile`, `cost-check`,
+  `report`, `search`) samples /proc/loadavg at run start and refuses when
+  the 1-min load average exceeds `--max-load` (default: half of available
+  CPUs — catches the F-006 class, load 24 on 16 cores, while tolerating
+  desktop noise). Every output record carries `load`/`load5`/`load15`/
+  `max_load`/`load_override`; `--allow-loaded` runs anyway and sets
+  `load_override: true`, keeping overrides auditable.
+- regression: `load_guard_tests` (refusal/override/NaN decision table,
+  default scaling, CLI flags on all four benchmark subcommands);
+  live refusal (exit 1) and override demonstration logged in
+  trials/f006-load-guard.jsonl (git 282577c).
+- historical note: pre-guard records (incl. the a8bf146 exam) keep their
+  batch-scoped load; only new runs carry per-run load (closes F-021's
+  remaining structural gap).
 
 ## F-007 selector behind same-equation gristmill on confirmed ADC2/EOM cases [OPEN — ADC2 mechanism verified]
 - symptom: the valid a8bf146 exam measures six-problem geomean 0.902x t1 /
@@ -328,7 +336,7 @@ study (archive/RESEARCH-v1.md, tag `hl-study-final`).
   is retired solely because its measured CCD/CCSD candidates independently
   violate the Axis-1 adoption clause. The tournament record states this.
 
-## F-021 The a8bf146 exam record does not institutionalize the F-006/F-013 lessons: sizes, iteration counts, checksums, and per-benchmark load are all absent [OPEN — structured records added, per-run load pending F-006]
+## F-021 The a8bf146 exam record does not institutionalize the F-006/F-013 lessons: sizes, iteration counts, checksums, and per-benchmark load are all absent [CLOSED — per-run load now structural]
 - symptom: the protected-exam-axis1-axis2 line records no problem sizes
   (SPEC's corpus has three; which one produced the rows is knowable only by
   inference from F-007 fixtures), no iters/warmup fields (the protocol's
@@ -344,9 +352,12 @@ study (archive/RESEARCH-v1.md, tag `hl-study-final`).
   names (runner refuses under load, records load per run) remains unbuilt.
 - response: accepted. trials/exam-a8bf146-runs.jsonl adds sizes, 10/3
   iteration/warmup fields, min/median/max, checksums, and candidate hashes
-  for all 24 runs. Batch-start load is explicitly scoped as such; per-run
-  load was not measured and is not fabricated. F-006 retains that structural
-  blocker.
+  for all 24 runs. Batch-start load is explicitly scoped as such; the
+  a8bf146 records were not retrofitted.
+- resolution: the F-006 structural guard (git 282577c) makes every timing
+  command sample and record load at run start and refuse above
+  `--max-load`, so all future exam records carry per-run load by
+  construction. Historical records are unchanged, not fabricated.
 
 ## F-022 The ADC2 anchor baseline differs ~15% across two guard-compliant sessions; unremarked, and F-016's calibration depends on which is right [CLOSED — variance recorded, calibration claim scoped]
 - symptom: adc2 same-equation gristmill t1 measured 58.7 ms in
