@@ -14,3 +14,9 @@ Setup (Python 3.12; dummy_spark needs the serial shim):
 
 dspark_shim.py monkeypatches dummy_spark for py3.12 (collections.abc moves,
 serial aggregate/broadcast/repartition, etc.).
+
+run_exam.py is the protected milestone-exam driver (PROTOCOL slow loop):
+regenerates selected candidates, runs the Axis-0 gate, checks the Axis-1
+cap, and times interleaved A/B same-backend runs, writing per-run records
+to trials/exam-<git>-runs.jsonl. Run it once per milestone event, on an
+idle machine, and commit its outputs with the milestone response.
