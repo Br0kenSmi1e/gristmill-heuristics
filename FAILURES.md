@@ -39,17 +39,34 @@ study (archive/RESEARCH-v1.md, tag `hl-study-final`).
 - fix: one projected representative per symmetry component
 - regression: `harness check` on gristmill candidates
 
-## F-004 cost model blind to high-rank slow path [OPEN]
+## F-004 cost model blind to high-rank slow path [OPEN — mechanism sharpened by calibration; model v2 pending]
 - symptom: ccsd_t candidate predicted 0.41 s, measured 8.1 s (20x error);
   model-only acceptance shipped a schedule SLOWER than naive
-- mechanism: binary clean/slow GEMM classification too coarse; rank-6
-  intermediate-forming ops run at ~0.6 GF/s, 100x below clean GEMM, 37x
-  below the modeled slow rate
-- planned fix (M1): rank/stride-dependent slow-path rate from a calibration
-  grid; model-vs-measured CI gate at 2x; model-only acceptance restricted
-  to in-envelope ops
+- mechanism (v2, VERIFIED by the M1.1 calibration grid,
+  profiles/calibrate-v1.json, two guard-compliant sessions agreeing within
+  3% on all >=100 ms cases): the hole is the backend's REDUCTION path, not
+  operand count and not index rank per se. Output-rank 0/1 contractions run
+  at 0.02–0.09 GF/s t1 — including a plain rank-1 dot product "a,a->" at
+  0.088 GF/s — 250–3000x below clean GEMM (57.7 GF/s) and ~250x below the
+  modeled slow rate (22.5). This path has NO t1->t16 thread scaling;
+  rank-1-output ops (bin_r6_out1) run 6–15x SLOWER at t16 (unstable:
+  362 vs 945 ms across sessions). Rank-6-output formation is a third,
+  intermediate class (0.4–6 GF/s). Controls: low-rank n-ary chains reach
+  455–575 GF/s (operand count irrelevant); chaining a ternary reduction
+  into binaries does NOT rescue (each binary reduction inherits the slow
+  path). The grid reproduces the in-situ miss exactly: tern_r6_scalar at
+  (4,8) = 3.24 ms vs ccsd_t_struct op#45's reported 3.32 ms, model 0.03 ms
+  (108x).
+- original mechanism note (superseded in kind, not in direction): binary
+  clean/slow GEMM classification too coarse; rank-6 intermediate-forming
+  ops run at ~0.6 GF/s.
+- planned fix (M1, remaining): cost model v2 prices the reduction class
+  separately (rate table from calibrate-v1, thread-flat), keeps the
+  clean/slow GEMM classes for matricizable steps; model-vs-measured CI
+  gate at 2x; model-only acceptance restricted to in-envelope ops.
 - exposing case: ccsd_t structural-proposer candidate (trials-v1/struct_all.jsonl);
-  ADC2 selected-vs-gristmill gap underprediction (F-016)
+  ADC2 selected-vs-gristmill gap underprediction (F-016); calibrate cases
+  tern_r6_scalar / bin_r6_out1 / dot_r2_scalar.
 
 ## F-005 kernel biclique enumeration explodes on large defs [OPEN]
 - symptom: ccsd_t def0 query >400 s (kernel enumerates ALL maximal

@@ -29,9 +29,16 @@ PROTOCOL.md. What is broken: FAILURES.md. What we might try: IDEAS.md.
   are complementary; both are needed.
 - **Memory is a feasibility constraint**, not just performance (naive EOM
   needs >1 GB of temporaries; CCSD(T) D3 input alone is 8.6 GB at (16,64)).
+- **The backend's reduction path is a third cost regime** (M1.1 grid,
+  profiles/calibrate-v1.json): contractions with output rank 0/1 run at
+  0.02–0.09 GF/s t1 — even a rank-1 dot product — with no t16 scaling
+  (negative for rank-1 output). Matricizable contractions run at the
+  calibrated clean/slow GEMM rates; low-rank n-ary chains are fine.
+  Splitting n-ary reductions into binaries does not rescue them.
 - **Measurement hygiene is load-bearing**: one contaminated batch cost a
   full re-measurement cycle; one weak baseline fabricated a 1.42x "win".
-  Both are now protocol rules.
+  Both are now protocol rules, and the load guard is structural inside the
+  timing commands (F-006).
 - **Oracle inputs must satisfy the full symmetry-group orbit**, not only
   direct relations among used blocks. Composed relations through unused
   intermediate access patterns are required by canonicalization (F-009).
@@ -53,7 +60,8 @@ PROTOCOL.md. What is broken: FAILURES.md. What we might try: IDEAS.md.
 
 ## Next investment
 
-M1: calibration suite (rank/shape/stride/thread grid -> versioned rates
-file) + cost model v2 + model-vs-measured CI. Load guard inside the
-timing commands is done (F-006, 282577c). Acceptance: ccsd_t intermediate
-ops predicted within 2x — the exact failure F-004 records.
+M1 (in progress): calibration suite DONE (profiles/calibrate-v1.json,
+trials/m11-calibration.jsonl). Remaining: cost model v2 pricing the
+reduction regime separately + model-vs-measured CI gate at 2x. Load guard
+inside the timing commands is done (F-006, 282577c). Acceptance: ccsd_t
+intermediate ops predicted within 2x — the exact failure F-004 records.
