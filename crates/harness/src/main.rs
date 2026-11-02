@@ -1628,20 +1628,21 @@ mod axis1_tests {
         .unwrap();
         problem.sizes.insert(DomainId(0), 16);
         problem.sizes.insert(DomainId(1), 64);
-        let selected: truthmill::Program = serde_json::from_str(include_str!(
-            "../../../benches/candidates/mp3_selected.json"
-        ))
-        .unwrap();
+        // The over-cap fixture is the problem's own naive reference program
+        // (always above the cap), NOT a checked-in selected candidate: the
+        // v2-era mp3_selected is legitimately under-cap, and a fixture that
+        // depends on a regenerated candidate's flop count is unstable.
+        let over_cap = problem.reference.clone();
         let baseline: truthmill::Program = serde_json::from_str(include_str!(
             "../../../benches/candidates/mp3_gristmill.json"
         ))
         .unwrap();
         let baseline_log = truthmill::log_flops(&problem, &baseline).unwrap();
         let cap = baseline_log + 1.05f64.ln();
-        let selected_log = truthmill::log_flops(&problem, &selected).unwrap();
-        assert!(selected_log > cap);
+        let over_cap_log = truthmill::log_flops(&problem, &over_cap).unwrap();
+        assert!(over_cap_log > cap);
         let (fallback, fallback_log, fell_back) =
-            enforce_flop_cap(&problem, selected, &baseline, cap).unwrap();
+            enforce_flop_cap(&problem, over_cap, &baseline, cap).unwrap();
         assert!(fell_back);
         assert_eq!(fallback, baseline);
         assert!(fallback_log <= cap);
