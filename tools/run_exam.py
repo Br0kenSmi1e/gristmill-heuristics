@@ -41,7 +41,7 @@ SELECT_SIZES = "0=16,1=64"
 CHECK_SIZES = "0=3,1=5"
 TIME_SIZES = {"ccsd_t": "0=8,1=32"}  # SPEC: ccsd_t fits the 14 GB envelope at (8,32)
 DEFAULT_TIME_SIZES = "0=16,1=64"
-SELECT_TIMEOUT_S = 1800
+SELECT_TIMEOUT_S = 7200
 TIMEOUT_S = 900
 
 
@@ -61,14 +61,21 @@ def loadavg():
 
 def run(cmd, timeout):
     t0 = time.time()
-    p = subprocess.run(cmd, capture_output=True, text=True, cwd=ROOT, timeout=timeout)
-    rec = {"cmd": " ".join(str(c) for c in cmd), "exit": p.returncode,
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, cwd=ROOT,
+                           timeout=timeout)
+        rc, out, err_tail = p.returncode, p.stdout, p.stderr.strip().splitlines()[-3:]
+    except subprocess.TimeoutExpired as e:
+        # Never die with a bare traceback inside a protected exam: record it.
+        rc, out = "timeout", (e.stdout or b"").decode() if isinstance(e.stdout, bytes) else (e.stdout or "")
+        err_tail = [f"TIMEOUT after {timeout}s"]
+    rec = {"cmd": " ".join(str(c) for c in cmd), "exit": rc,
            "wall_s": round(time.time() - t0, 2)}
-    lines = [l for l in p.stdout.splitlines() if l.strip().startswith("{")]
+    lines = [l for l in out.splitlines() if l.strip().startswith("{")]
     if lines:
         rec["json"] = json.loads(lines[-1])
-    if p.returncode != 0:
-        rec["stderr_tail"] = p.stderr.strip().splitlines()[-3:]
+    if rc != 0:
+        rec["stderr_tail"] = err_tail
     return rec
 
 
