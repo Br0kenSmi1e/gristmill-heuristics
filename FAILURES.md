@@ -12,7 +12,15 @@ fixture, fix, regression pointer. CLOSED entries are kept for audit
 - **F-016** model error untracked on held-out — calibration owned by M1;
   new v2 gap classes (k-heavy low-rank-out, lincomb rank-6) logged
 - **F-017** CCSD(T) memory: HARD blocker, no full-size reruns
-- **F-027..F-034** open critic challenges on the exam-cd921bd milestone
+- **F-035** backend n-ary execution planning nondeterministic per process
+  (F-028's mechanism on the execution side; wall-time impact unmeasured)
+- **F-036** migrate calibration + exams to the release binary profile
+  (F-033: debug does not preserve ratios — the mp3 win is 1.19x debug,
+  1.02-1.04x release t1)
+- **F-027..F-034** milestone critic challenges — ALL ANSWERED (F-028/033/
+  027 closed with new evidence: deterministic model planner, release-ratio
+  falsification, mp3 replication; F-029/030/031/032/034 closed on records;
+  F-035/F-036 opened in response)
   (see the third "Critic challenges" section)
 
 Entries below are in rough filing order, not priority order; the two
@@ -251,6 +259,24 @@ study (archive/RESEARCH-v1.md, tag `hl-study-final`).
   execution follows TreeSA's per-process trees for n-ary ops. The
   difference is bounded by tie width (equal-complexity orderings), now a
   stated assumption rather than an implicit one.
+- evidence addendum (F-033 batch): release-binary mp3 gristmill t16 is
+  bimodal across processes (50.8 vs 58.0-58.2 ms, 3 reps) — consistent
+  with per-process tree rolls moving real wall time (selected is stable
+  at ~52 ms). First direct timing signature of this defect.
+
+## F-036 Migrate calibration and exams to the release binary profile [OPEN]
+- symptom (F-033): all calibration rates (calibrate-v1) and both protected
+  exams were measured with the debug-profile harness; release A/B shows
+  debug does not preserve ratios for the one genuine non-fallback cell
+  (mp3: 1.19x debug t1 -> 1.02-1.04x release t1; baseline gains more from
+  release than the selected schedule). SPEC measures the compiler's
+  artifact; a debug harness is not it.
+- plan: (1) release-profile `harness calibrate` -> calibrate-v2 rates file;
+  (2) cost model rates refresh (a model change -> fires a milestone); (3)
+  re-run the protected exam on release. Sequenced AFTER I-007 (I-007 is
+  model-priced and internally consistent under debug-calibrated rates).
+- constraint: debug-era absolute ms remain valid within the debug regime;
+  cross-profile comparisons of absolute times are forbidden.
 
 ## Critic challenges (milestone after I-005 retirement; filed by fresh-context critic, milestone stays OPEN until each is fixed or rebutted with evidence)
 
@@ -567,7 +593,18 @@ study (archive/RESEARCH-v1.md, tag `hl-study-final`).
 
 ## Critic challenges (milestone after exam-cd921bd; filed by fresh-context critic, milestone stays OPEN until each is fixed or rebutted with evidence)
 
-## F-027 Exam Axis-2 batch ran under climbing load; identical-program cells diverge up to 8.9%; the milestone's only genuine win is barely above demonstrated same-batch noise and is unreplicated [OPEN]
+## F-027 Exam Axis-2 batch ran under climbing load; identical-program cells diverge up to 8.9%; the milestone's only genuine win is barely above demonstrated same-batch noise and is unreplicated [CLOSED — replicated on debug; does NOT survive release, see F-033/F-036]
+- resolution: replicated. trials/f027-f033-replication.jsonl: mp3 selected
+  vs gristmill on the exam's debug binary, 3 interleaved A/B rounds at
+  load ~1.1-1.7: t1 speedups 1.1857/1.1855/1.1800 (exam: 1.1937), t16
+  1.1838/1.0972/1.1200 (exam: 1.1393). The win replicates on the exam's
+  own binary and clearly exceeds the same-batch identical-program noise
+  (<=1.09x) at t1. HOWEVER the F-033 release check shows the win is
+  profile-dependent (release: 1.017-1.045x t1, t16 roll-dependent), so
+  RESEARCH.md now calls it a debug-regime win only. The load-climb and
+  within-run dispersion observations stand as recorded; the load guard's
+  start-of-run sampling blind spot is acknowledged (mid-run contamination
+  remains visible only in min/max fields).
 - symptom: exam-cd921bd load_at_start [0.75,1.24,1.49] vs load_at_end
   [7.69,4.37,3.25]; per-run start loads range 1.74-5.58. Within single
   10-iter runs the recorded min/max fields show adc2 t16 spans 93.96-344.06
@@ -631,7 +668,7 @@ study (archive/RESEARCH-v1.md, tag `hl-study-final`).
   (ccsd_lambda phase-A lines); repro streams referenced in the f028 trial
   line.
 
-## F-029 "Axis 1 green" is a 6/7 claim; ccsd_t was timed on a stale v1-era candidate with no hash pinning, and its slowness mechanism is asserted without a profile [OPEN — Axis-1 half resolved: ccsd_t is RED; profile pending]
+## F-029 "Axis 1 green" is a 6/7 claim; ccsd_t was timed on a stale v1-era candidate with no hash pinning, and its slowness mechanism is asserted without a profile [CLOSED — ccsd_t RED recorded; attribution profiled]
 - symptom: exam phase C flop_ratios lists six problems; ccsd_t — a corpus
   problem whose Axis-1 check is execution-free — is absent. F-026 closed
   the identical omission for phase B only; the phase-C half persists and is
@@ -658,9 +695,13 @@ study (archive/RESEARCH-v1.md, tag `hl-study-final`).
   covers ccsd_t in phase C (flops --candidate, a new flag) and pins
   candidate sha256 in phase D. Regenerating ccsd_t under v2 would force
   the F-018 fallback (1.0x by construction) but is not claimed.
-  REMAINING: the 27.1 s/iter attribution to the reduction class is still
-  asserted, not profiled — per-op profile of THIS candidate at (8,32)
-  pending a clean timing window.
+  REMAINING: none — attribution VERIFIED: per-op profile of the exact
+  exam configuration (ccsd_t_selected, (8,32), t1, --allow-risky with the
+  exam's prior guarded run as safety evidence) shows output-rank<=1
+  einsum ops carry 100.0% of the 21.6 s op-profiled time (top op 2.72 s).
+  The reduction-class attribution for the 27.1 s/iter is now profiled,
+  not asserted.
+- status: CLOSED.
 
 ## F-030 F-016's milestone-gated model-v2-on-ADC2 evaluation was due at this milestone and did not happen; the miss is unrecorded [CLOSED — evaluation performed, gap survives v2]
 - resolution: accepted; the evaluation ran late-but-in-milestone
@@ -727,7 +768,21 @@ study (archive/RESEARCH-v1.md, tag `hl-study-final`).
   a green Axis-1 milestone no longer evidences search quality — that
   evidence now lives only in Axis 2 and in the non-fallback count.
 
-## F-033 All exam wall-time numbers come from a debug-profile binary; rationale and ratio validity unrecorded [OPEN]
+## F-033 All exam wall-time numbers come from a debug-profile binary; rationale and ratio validity unrecorded [CLOSED — ratio validity FALSIFIED for the one genuine win; migration filed as F-036]
+- resolution: accepted, and the critic's suspicion was CORRECT. Release
+  A/B (same candidates, interleaved, 10/3, load-guarded;
+  trials/f027-f033-replication.jsonl): fallback-identity cells hold
+  (ccd 0.998/0.983, adc2 0.999/1.086 — matching debug's parity), but mp3
+  moves from 1.19x/1.14x (debug) to 1.017-1.045x t1 and
+  0.97/1.12/1.12 t16 (release, 3 reps). The release baseline gained more
+  from optimization than the selected schedule did (gristmill 1.79x
+  debug->release vs selected 1.53x). ALSO: release gristmill mp3 t16 is
+  bimodal across processes (50.8 vs 58.0-58.2 ms) — the F-035 tree-roll
+  signature in timing data. Consequences recorded: (a) debug-regime
+  absolute times and ratios do not transfer to release; (b) SPEC measures
+  the compiler's artifact, so release is the honest profile — F-036 owns
+  the migration (release calibration + rates refresh + re-exam); (c) the
+  exam-cd921bd mp3 win is downgraded to debug-regime-only in RESEARCH.md.
 - symptom: the exam line pins binary_profile "debug" (harness sha256
   d761e7972804b49f). a8bf146's unanchored-profile defect is fixed, but the
   choice of a debug build for protected wall-time evaluation is justified

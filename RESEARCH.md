@@ -24,13 +24,18 @@ PROTOCOL.md. What is broken: FAILURES.md. What we might try: IDEAS.md.
   ccd/ccsd/lambda/eom/adc2 at 1.0 by fallback identity; ccsd_t's stale
   v1-era candidate is RED at 40.6x cap, execution-free check,
   trials/f029-ccsd_t-axis1.jsonl). Axis 2 six-problem
-  geomean 1.030x t1 / 1.031x t16 vs same-equation gristmill — but five of six
-  cells are fallback-vs-baseline noise (+-9%); the only genuine non-fallback
-  result is MP3 (1.194x t1 / 1.139x t16, fewer FLOPs AND faster). The v2-priced
+  geomean 1.030x t1 / 1.031x t16 vs same-equation gristmill ON THE DEBUG
+  BINARY. Critic follow-up (F-027/F-033, trials/f027-f033-replication.jsonl):
+  the only genuine non-fallback result, mp3, replicates on debug
+  (1.180-1.186x t1 x3) but is PROFILE-DEPENDENT — on release it shrinks to
+  1.017-1.045x t1 and t16 is tree-roll-dependent (F-035 bimodality); the
+  debug->release gain is larger for the baseline than for our schedule.
+  Net: same-backend PARITY on release, modest win on debug. The v2-priced
   greedy selector beats the baseline only on mp3: search quality under the
-  corrected model is now the binding Axis-2 question (F-007 reframed).
-  ccsd_t remains untimed-vs-baseline (F-017; its selected candidate runs but
-  at 27.1 s/iter t1). Exam-cd921bd
+  corrected model is the binding Axis-2 question (F-007 reframed); I-007
+  selects the M2 algorithm. F-036 owns the release-profile migration.
+  ccsd_t: baseline memory-guarded (F-017); the stale selected candidate's
+  27.1 s/iter is 100% reduction-class ops by profile (F-029). Exam-cd921bd
   numbers supersede a8bf146's (which never pinned its binary profile; its
   absolute ms are unanchored, ratios still valid).
   All 12 mixed per-cell results, including CCSD/lambda thread inversions,

@@ -265,6 +265,12 @@ enum Cmd {
         iters: usize,
         #[arg(long, default_value = "0")]
         seed: u64,
+        /// Profile anyway when n-ary union-intermediate warnings fire.
+        /// Justified ONLY for a candidate+size that has already completed a
+        /// guarded `time` run (F-017: no blind limit-raising; the rlimit
+        /// backstop stays).
+        #[arg(long)]
+        allow_risky: bool,
         /// Refuse to profile when the 1-min load average exceeds this
         /// (default: half of available CPUs; the F-006 guard).
         #[arg(long)]
@@ -1445,6 +1451,7 @@ let t0 = std::time::Instant::now();
             threads,
             iters,
             seed,
+            allow_risky,
             max_load,
             allow_loaded,
             transform,
@@ -1463,8 +1470,11 @@ let t0 = std::time::Instant::now();
                 &layout2::PolicyParams::default(), threads)?;
             let tensor_blocks = interp::to_tensor_blocks_permuted(&blocks.permuted)?;
             let est = interp::estimate_memory(&program, &tensor_blocks, &problem.sizes, 1 << 30);
-            if !est.risky_ops.is_empty() || est.peak_live_bytes / (1 << 20) > 6000 {
+            if !allow_risky && !est.risky_ops.is_empty() || est.peak_live_bytes / (1 << 20) > 6000 {
                 anyhow::bail!("memory guard tripped: {:?}", est.risky_ops);
+            }
+            if allow_risky && !est.risky_ops.is_empty() {
+                eprintln!("WARNING: --allow-risky with {} risky ops: {:?}", est.risky_ops.len(), est.risky_ops);
             }
             let mut backend = CpuBackend::with_threads(threads).map_err(anyhow::Error::msg)?;
             let profiles = interp::profile_ops(&program, &tensor_blocks, &mut backend, iters, &problem.sizes)?;
