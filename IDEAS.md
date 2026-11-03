@@ -127,7 +127,7 @@ Some compiler components are permanently open to challenge at tournaments:
   two-step single-term-optimization/CSE approach because their combined space
   is exponential. Web prior-art check: 2026-10-29; no novelty claim made.
 
-## I-007 space-vs-search discrimination experiment [proposed]- question (F-007 reframed): the v2-priced greedy selector finds nothing
+## I-007 space-vs-search discrimination experiment [tested]- question (F-007 reframed): the v2-priced greedy selector finds nothing
   better than baseline on 5/6 problems. Is that because (a) the rewrite
   space CONTAINS nothing better, (b) the space contains better schedules
   greedy cannot reach, or (c) pricing is still wrong?
@@ -145,6 +145,22 @@ Some compiler components are permanently open to challenge at tournaments:
 - prerequisite: F-028 (selector nondeterminism) must be closed first —
   space enumeration is meaningless if the emitter is nondeterministic.
 - addresses: F-007; gates the M2 algorithm choice.
+- RESULT (trials/i007.jsonl, instrument `harness space-dump`): adc2 is
+  SPACE-bound and measurement-corroborated (min 0.1185 s vs baseline
+  0.1049 s; the space min IS the v1-era selected's price — the search
+  found it). ccd and ccsd are confounded by leg (c): the model prices
+  in-space states 17-51% above baseline while those states measure at
+  parity or better (ccd 0.8313-priced vs 0.996x measured; ccsd v1-era
+  selected 1.058-priced vs 0.947x t1 / 1.201x t16 measured) — pricing
+  error exceeds the space gap, so no space/search conclusion is sound
+  there. ccsd caveat: budgeted best-first (80 expansions, 6498 states)
+  missed the known reachable v1-era selected state — instrument budget
+  limitation recorded. M2 SELECTION: model v3 (F-016 gap classes) FIRST;
+  I-001 (search depth) unsupported on all three; adc2 additionally shows
+  the kernel space itself tops out above baseline. Bonus finding: the
+  selector's FLOP top-8 prefilter causally blinds it (ccd prefilter-free
+  greedy reaches 0.831 s where the selector converged at step 0) — a
+  selector bug independent of M2.
 
 ## I-008 structural proposer as factorization challenger [priced]
 - origin: written in response to F-034 (critic: the contested-slot

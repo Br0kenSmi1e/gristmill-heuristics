@@ -17,6 +17,9 @@ fixture, fix, regression pointer. CLOSED entries are kept for audit
 - **F-036** migrate calibration + exams to the release binary profile
   (F-033: debug does not preserve ratios — the mp3 win is 1.19x debug,
   1.02-1.04x release t1)
+- **F-037** selector FLOP top-8 prefilter causally blinds model-priced
+  acceptance (I-007 finding: prefilter-free ccd greedy reaches 0.831 s
+  where the selector converged at step 0)
 - **F-027..F-034** milestone critic challenges — ALL ANSWERED (F-028/033/
   027 closed with new evidence: deterministic model planner, release-ratio
   falsification, mp3 replication; F-029/030/031/032/034 closed on records;
@@ -233,6 +236,25 @@ study (archive/RESEARCH-v1.md, tag `hl-study-final`).
   recorded addendum (both pass, worst rel 2.5e-15) in
   trials/exam-cd921bd.jsonl (kind=protected-exam-axis0-addendum).
 - regression: run_exam.py phase B covers all seven problems.
+
+## F-037 Selector's FLOP top-8 prefilter causally blinds model-priced acceptance [OPEN]
+- symptom (I-007 byproduct): `harness select` on ccd converges at step 0
+  (no improving move), while the same-instrument prefilter-free greedy in
+  `space-dump` reaches 0.831 s (from 1.227 s initial). The selector prices
+  only the symbolic-FLOP top-8 biclique variants per definition; under
+  model v2, wall-time-improving moves can be FLOP-neutral or FLOP-worse
+  (layout/reduction-class effects), so the prefilter discards exactly the
+  moves the model would accept.
+- mechanism: VERIFIED by the instrument diff (select step-0 convergence vs
+  space-dump greedy terminal 0.8313 s on identical initial state and
+  scoring; trials/i007.jsonl).
+- fix candidates: rank biclique variants by model price directly (price
+  all; ccd full enumeration ~5 min/step is affordable), or widen the
+  prefilter to a FLOP band + diversity quota. Chosen fix needs a
+  compile-time budget record.
+- exposing fixture: `harness select benches/chemistry/ccd.json --sizes
+  0=16,1=64` (converges step 0) vs `harness space-dump ... --max-expansions
+  1` (one-step min 1.1396 < 1.2270 initial).
 
 ## F-035 Backend n-ary execution planning is nondeterministic per process; measured wall times can differ for identical programs [OPEN]
 - symptom: F-028's mechanism applies to EXECUTION too: interp::prepare
