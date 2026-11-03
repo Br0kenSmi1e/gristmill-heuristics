@@ -4,6 +4,7 @@
 mod bridge;
 mod calibrate;
 mod costmodel;
+mod spacedump;
 mod propose;
 mod dense;
 mod interp;
@@ -190,6 +191,24 @@ enum Cmd {
         threads: usize,
         #[arg(long, default_value = "5")]
         reps: usize,
+    },
+    /// I-007 space-vs-search experiment: enumerate and model-price the full
+    /// kernel action space (best-first, budgeted) vs baseline vs greedy.
+    SpaceDump {
+        problem: PathBuf,
+        #[arg(long)]
+        sizes: Option<String>,
+        #[arg(long, default_value = "1")]
+        threads: usize,
+        /// Best-first expansion budget.
+        #[arg(long, default_value = "24")]
+        max_expansions: usize,
+        /// Append the result record here (JSONL).
+        #[arg(long)]
+        out: PathBuf,
+        /// Same-equation gristmill baseline (for the baseline price).
+        #[arg(long)]
+        baseline: Option<PathBuf>,
     },
     /// HL selector: greedy rewrite search over gristmill-rewrites kernel,
     /// scored by the analytic wall-time model (layout-in-the-loop).
@@ -1016,6 +1035,33 @@ let t0 = std::time::Instant::now();
                     println!("  op{i:>3} {:.17e}", c);
                 }
             }
+        }
+        Cmd::SpaceDump {
+            problem,
+            sizes,
+            threads,
+            max_expansions,
+            out,
+            baseline,
+        } => {
+            let name = stem(&problem);
+            let baseline_path = baseline.unwrap_or_else(|| {
+                problem
+                    .parent()
+                    .unwrap()
+                    .join("../candidates")
+                    .join(format!("{name}_gristmill.json"))
+            });
+            let problem = load_problem(&problem, &sizes)?;
+            let baseline_program = load_program(&problem, "none", 256, Some(baseline_path))?;
+            spacedump::run(
+                &problem,
+                &name,
+                &baseline_program,
+                threads,
+                max_expansions,
+                &out,
+            )?;
         }
         Cmd::Select {
             problem,
