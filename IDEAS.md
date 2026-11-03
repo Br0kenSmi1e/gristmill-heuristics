@@ -126,3 +126,23 @@ Some compiler components are permanently open to challenge at tournaments:
   Contraction Evaluations", ICCS 2006, DOI 10.1007/11758501_39, describes a
   two-step single-term-optimization/CSE approach because their combined space
   is exponential. Web prior-art check: 2026-10-29; no novelty claim made.
+
+## I-007 space-vs-search discrimination experiment [proposed]
+- question (F-007 reframed): the v2-priced greedy selector finds nothing
+  better than baseline on 5/6 problems. Is that because (a) the rewrite
+  space CONTAINS nothing better, (b) the space contains better schedules
+  greedy cannot reach, or (c) pricing is still wrong?
+- hypothesis: enumerating the full kernel candidate space on train problems
+  and model-pricing ALL of it (not just the greedy path) shows whether
+  sub-baseline candidates exist at all.
+- cheapest test (model-priced, no new algorithm): dump every enumerated
+  candidate's v2 price on {ccd, ccsd, adc2}; compare min-price vs baseline
+  price vs greedy's reached price. Interpretation: min(space) >= baseline
+  => (a) space problem; min(space) < baseline but greedy misses it => (b)
+  search problem; prices invert vs measured anchors => (c) model problem.
+- adopt IF: n/a — this is a measurement, not a component. Its outcome
+  SELECTS which of I-001 (search depth), structural-proposer improvements
+  (space), or model v3 (pricing) is the M2 algorithm investment.
+- prerequisite: F-028 (selector nondeterminism) must be closed first —
+  space enumeration is meaningless if the emitter is nondeterministic.
+- addresses: F-007; gates the M2 algorithm choice.
