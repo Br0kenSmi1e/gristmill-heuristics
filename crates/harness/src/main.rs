@@ -136,6 +136,10 @@ enum Cmd {
         /// Evaluate polynomials numerically at these sizes, e.g. "0=100,1=1000".
         #[arg(long)]
         sizes: Option<String>,
+        /// External candidate Program JSON; print its FLOP count too
+        /// (the Axis-1 numerator).
+        #[arg(long)]
+        candidate: Option<PathBuf>,
     },
     /// Validate the analytic cost model: per-op predicted vs measured times.
     CostCheck {
@@ -173,6 +177,19 @@ enum Cmd {
     /// Probe: time kernel query() per definition, no selector logic.
     QueryProbe {
         problem: PathBuf,
+    },
+    /// F-028 probe: score the initial kernel state N times in-process and
+    /// print full-precision results + computation hashes. Distinguishes
+    /// in-process non-idempotence (global/cache state) from per-process
+    /// nondeterminism (run twice and diff).
+    SelectProbe {
+        problem: PathBuf,
+        #[arg(long)]
+        sizes: Option<String>,
+        #[arg(long, default_value = "1")]
+        threads: usize,
+        #[arg(long, default_value = "5")]
+        reps: usize,
     },
     /// HL selector: greedy rewrite search over gristmill-rewrites kernel,
     /// scored by the analytic wall-time model (layout-in-the-loop).
@@ -807,9 +824,22 @@ fn main() -> Result<()> {
             std::fs::write(&out, serde_json::to_string(&current)?)?;
             println!("{}", serde_json::json!({"kind":"search-done","problem":name,"accepted":accepted,"best_ms":best_ms,"out":format!("{}",out.display()),"load":load.l1,"max_load":load.max_load,"load_override":load.override_used}));
         }
-        Cmd::Flops { problem, sizes } => {
+        Cmd::Flops { problem, sizes, candidate } => {
             let name = stem(&problem);
             let mut problem = load_problem(&problem, &sizes)?;
+            if let Some(cand) = &candidate {
+                let prog = load_program(&problem, "none", 256, Some(cand.clone()))?;
+                let logf = truthmill::log_flops(&problem, &prog)
+                    .map_err(|e| anyhow::anyhow!("cost: {e:?}"))?;
+                let record = serde_json::json!({
+                    "kind": "flops",
+                    "problem": stem(&cand),
+                    "sizes": sizes_map(&problem),
+                    "log10_flops": logf / std::f64::consts::LN_10,
+                });
+                println!("{}", serde_json::to_string(&record)?);
+                return Ok(());
+            }
             // evaluate polynomials at requested sizes but keep original for display
             let greedy = transform::greedy_factor(&problem.reference, &problem.sizes);
             for (tag, prog) in [("reference", &problem.reference), ("greedy", &greedy)] {
@@ -944,6 +974,43 @@ let t0 = std::time::Instant::now();
                 }
                             }
         }
+        Cmd::SelectProbe {
+            problem,
+            sizes,
+            threads,
+            reps,
+        } => {
+            let problem = load_problem(&problem, &sizes)?;
+            let input_ids: Vec<u32> = dense::collect_patterns(&problem)
+                .keys()
+                .map(|t| t.0)
+                .collect();
+            let (computation, outputs) = bridge::problem_to_computation(&problem, 1000);
+            let output_ids: Vec<u32> = outputs.iter().map(|t| t.0).collect();
+            let rates = costmodel::rates_for_threads(threads);
+            let state = gristmill_rewrites::state::State::new(computation, outputs)
+                .map_err(|e| anyhow::anyhow!("state: {e:?}"))?;
+            for rep in 0..reps {
+                let comp = state.computation();
+                let prog =
+                    bridge::computation_to_program(comp, &input_ids, &output_ids);
+                let (bl, vl) = layout3::plan_layouts_model(&problem, &prog, &rates, 1);
+                let prog2 = layout::apply_layouts_to_program_v2(&prog, &vl);
+                let per_op =
+                    costmodel::program_costs(&prog2, &problem.sizes, &bl, &rates);
+                let total: f64 = per_op.iter().sum();
+                println!(
+                    "rep{rep}: comp {:016x} layouts {}+{} total {:.17e}",
+                    comp_hash(comp),
+                    bl.len(),
+                    vl.len(),
+                    total
+                );
+                for (i, c) in per_op.iter().enumerate() {
+                    println!("  op{i:>3} {:.17e}", c);
+                }
+            }
+        }
         Cmd::Select {
             problem,
             sizes,
@@ -992,7 +1059,8 @@ let t0 = std::time::Instant::now();
                     .iter()
                     .map(|(dom, s)| (gristmill_rewrites::repr::RangeId(dom.0), (*s as f64).ln()))
                     .collect();
-            let score = |comp: &gristmill_rewrites::repr::Computation| -> f64 {
+            let trace_scores = std::env::var("H_TRACE").is_ok();
+            let score_inner = |comp: &gristmill_rewrites::repr::Computation| -> f64 {
                 if score_mode == "flops" {
                     // gristmill-policy replica: symbolic FLOPs only.
                     return gristmill_rewrites::cost::log_flops(comp, &log_sizes)
@@ -1005,6 +1073,17 @@ let t0 = std::time::Instant::now();
                 costmodel::program_costs(&prog, &problem.sizes, &bl, &rates)
                     .iter()
                     .sum()
+            };
+            // H_TRACE (F-028 diagnostics): full-precision score + a
+            // deterministic computation hash per scored candidate, in
+            // evaluation order. Diff two runs' streams to localize
+            // nondeterminism (state hash vs score value).
+            let score = |comp: &gristmill_rewrites::repr::Computation| -> f64 {
+                let c = score_inner(comp);
+                if trace_scores {
+                    eprintln!("[trace] {:016x} {:.17e}", comp_hash(comp), c);
+                }
+                c
             };
 
             use gristmill_rewrites::action::{self, ActionQuery, ActionSpace};
@@ -1608,6 +1687,45 @@ mod load_guard_tests {
 }
 
 #[cfg(test)]
+mod determinism_tests {
+    use super::*;
+
+    /// F-028 regression: the model must be a pure function of the program.
+    /// Pre-fix, omeco TreeSA tie-breaking (HashMap iteration order, seed
+    /// advancing per call) made repeated scoring of the SAME computation
+    /// differ both in-process and across processes (mp3: 0.397 vs 0.621 s).
+    #[test]
+    fn model_scoring_is_deterministic_across_repeated_calls() {
+        let mut problem = Problem::from_json(include_str!(
+            "../../../benches/chemistry/mp3.json"
+        ))
+        .unwrap();
+        problem.sizes.insert(DomainId(0), 16);
+        problem.sizes.insert(DomainId(1), 64);
+        let input_ids: Vec<u32> = dense::collect_patterns(&problem)
+            .keys()
+            .map(|t| t.0)
+            .collect();
+        let (computation, outputs) = bridge::problem_to_computation(&problem, 1000);
+        let output_ids: Vec<u32> = outputs.iter().map(|t| t.0).collect();
+        let rates = costmodel::rates_for_threads(1);
+        let score = || -> f64 {
+            let prog = bridge::computation_to_program(&computation, &input_ids, &output_ids);
+            let (bl, vl) = layout3::plan_layouts_model(&problem, &prog, &rates, 1);
+            let prog = layout::apply_layouts_to_program_v2(&prog, &vl);
+            costmodel::program_costs(&prog, &problem.sizes, &bl, &rates)
+                .iter()
+                .sum()
+        };
+        let a = score();
+        let b = score();
+        let c = score();
+        assert_eq!(a.to_bits(), b.to_bits(), "score changed between calls: {a} vs {b}");
+        assert_eq!(a.to_bits(), c.to_bits(), "score changed between calls: {a} vs {c}");
+    }
+}
+
+#[cfg(test)]
 mod axis1_tests {
     use super::*;
 
@@ -2048,6 +2166,18 @@ fn git_hash() -> String {
         .and_then(|o| String::from_utf8(o.stdout).ok())
         .map(|s| s.trim().to_string())
         .unwrap_or_else(|| "unknown".into())
+}
+
+/// Deterministic content hash of a kernel computation (F-028
+/// diagnostics). DefaultHasher::new() uses fixed keys, so this is stable
+/// across processes (not guaranteed across toolchain releases — diagnostics
+/// only, never persisted as provenance).
+fn comp_hash(comp: &gristmill_rewrites::repr::Computation) -> u64 {
+    use std::hash::Hasher;
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    let s = serde_json::to_string(comp).unwrap_or_default();
+    std::hash::Hash::hash(&s, &mut h);
+    h.finish()
 }
 
 fn sha256_file(path: &PathBuf) -> String {

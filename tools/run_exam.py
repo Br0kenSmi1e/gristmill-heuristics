@@ -154,6 +154,26 @@ def main():
         if ratio > 1.05 + 1e-9:
             axis1_fail.append(prob)
         print(f"  C {prob}: flop_ratio={flop_ratios[prob]} fallback={j.get('flop_fallback')}")
+    # ccsd_t: execution-free Axis-1 via flops --candidate (F-029; timing is
+    # F-017-blocked but the FLOP gate is not).
+    ccsd_t_flops = {}
+    for cand in ["ccsd_t_selected", "ccsd_t_gristmill"]:
+        rec = run([HARNESS, "flops", "benches/chemistry/ccsd_t.json",
+                   "--sizes", TIME_SIZES["ccsd_t"], "--candidate",
+                   f"benches/candidates/{cand}.json"], TIMEOUT_S)
+        rec["phase"] = "C-axis1-ccsd_t"
+        rec["problem"] = "ccsd_t"
+        rec["candidate"] = cand
+        rec["candidate_sha256"] = sha256(ROOT / "benches" / "candidates" / f"{cand}.json")
+        runs.write(json.dumps(rec) + "\n")
+        runs.flush()
+        ccsd_t_flops[cand] = rec.get("json", {}).get("log10_flops")
+    if all(v is not None for v in ccsd_t_flops.values()):
+        ratio = 10 ** (ccsd_t_flops["ccsd_t_selected"] - ccsd_t_flops["ccsd_t_gristmill"])
+        flop_ratios["ccsd_t"] = round(ratio, 4)
+        if ratio > 1.05 + 1e-9:
+            axis1_fail.append("ccsd_t")
+        print(f"  C ccsd_t: flop_ratio={flop_ratios['ccsd_t']} (stale candidate, execution-free)")
     summary["phases"]["C"] = {"flop_ratios": flop_ratios, "axis1_failures": axis1_fail}
 
     # ---- Phase D: Axis 2 same-backend diagnostic, interleaved A/B ----
@@ -176,6 +196,8 @@ def main():
                 rec["problem"] = prob
                 rec["candidate"] = cand
                 rec["threads"] = threads
+                rec["candidate_sha256"] = sha256(
+                    ROOT / "benches" / "candidates" / f"{cand}.json")
                 runs.write(json.dumps(rec) + "\n")
                 runs.flush()
                 j = rec.get("json", {})

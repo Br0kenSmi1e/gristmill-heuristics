@@ -24,6 +24,13 @@ pre-registered adoption rules, and win or lose on the axes below.
   at (8,32) due to input footprint. Threads in {1, 16}, pinned.
 - Metric: steady-state per-iteration wall time, median of >=10 after >=3
   warmup, clean machine under the load guard.
+- Exam size convention (added 2026-11-03, F-031): protected exams run the
+  performance axes at (16,64) only — the middle corpus size, chosen for
+  runtime cost control (a full exam already takes >1 h). (8,40) and
+  (32,96) are deferred, not dropped: any claim involving SCALING (of
+  ratios, rates, or model error with problem size) requires re-running
+  the exam at all three sizes, and single-size exam numbers must be
+  labeled single-size.
 - Regime note (user decision): sizes are bounded by this machine (14 GB,
   16 cores). All claims are machine-relative; the spec measures the
   compiler, not the machine. Reaching beyond the in-core envelope
@@ -44,10 +51,14 @@ pre-registered adoption rules, and win or lose on the axes below.
   failing candidate. (Convention added 2026-10-29, F-015.)
 - **Axis 1 — FLOP quality (gate).** `harness flops` of our schedule
   <= 1.05x the same-equation gristmill baseline's count, every corpus
-  problem. This is a REAL gate, not a freebie. The a8bf146 exam falsified
-  the earlier assumption that the incumbent was green by construction: all
-  six measured schedules failed. The gate remains unchanged and is now
-  enforced at selector emission with verified-baseline fallback (F-018).
+  problem. Since F-018 this gate is enforced at emission with
+  verified-baseline fallback, which makes it a SAFETY FLOOR by
+  construction on fallback problems: green there means "baseline emission
+  works", not "the compiler's search matched the baseline" (F-032).
+  Exam reporting must therefore split the count: green-by-search-output
+  vs green-by-fallback-identity. Discrimination of compiler quality lives
+  in Axis 2 and in the non-fallback count. The pre-F-018 failure mode
+  (green ASSUMED without the cap) remains falsified and forbidden.
 - **Axis 2 — same-backend decomposition (DIAGNOSTIC, not acceptance).**
   Same-equation baseline candidates run through OUR stack on tenferro
   (`harness time --candidate ...`). Not a spec axis (user decision:

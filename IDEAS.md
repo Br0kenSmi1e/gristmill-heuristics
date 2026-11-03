@@ -127,8 +127,7 @@ Some compiler components are permanently open to challenge at tournaments:
   two-step single-term-optimization/CSE approach because their combined space
   is exponential. Web prior-art check: 2026-10-29; no novelty claim made.
 
-## I-007 space-vs-search discrimination experiment [proposed]
-- question (F-007 reframed): the v2-priced greedy selector finds nothing
+## I-007 space-vs-search discrimination experiment [proposed]- question (F-007 reframed): the v2-priced greedy selector finds nothing
   better than baseline on 5/6 problems. Is that because (a) the rewrite
   space CONTAINS nothing better, (b) the space contains better schedules
   greedy cannot reach, or (c) pricing is still wrong?
@@ -146,3 +145,27 @@ Some compiler components are permanently open to challenge at tournaments:
 - prerequisite: F-028 (selector nondeterminism) must be closed first —
   space enumeration is meaningless if the emitter is nondeterministic.
 - addresses: F-007; gates the M2 algorithm choice.
+
+## I-008 structural proposer as factorization challenger [priced]
+- origin: written in response to F-034 (critic: the contested-slot
+  challenger roster was never written, so the incumbent was re-seated by
+  procedure at two milestones). The proposer is implemented
+  (`select --engine structural`, `crates/harness/src/propose.rs`;
+  benches/candidates/*_struct.json are its v1-era artifacts) and carries
+  the F-004 exposing case and F-005's CCSD failure.
+- hypothesis: definition-level structural factorization (no kernel
+  biclique enumeration) produces schedules competitive with the incumbent
+  kernel selector inside the kernel's envelope, and remains defined above
+  it (the F-005 motivation).
+- cheapest test (this milestone's tournament, mechanical): regenerate the
+  struct candidates under the CURRENT engine (model v2 + F-018
+  cap/fallback) on {ccd, ccsd, ccsd_lambda, eom_ccsd, adc2} (mp3: no
+  structural action space exists — not evaluable there; ccsd_t: execution
+  blocked by F-017); compare flop ratios and t1/t16 measured wall time vs
+  the incumbent's exam-cd921bd numbers, 10/3, load-guarded.
+- adopt IF (the contested slot's displacement rule, applied mechanically):
+  Axis 1 <= 1.05x on every corpus problem the proposer emits for, AND
+  Axis 2 geomean over the evaluable problems beats the incumbent's
+  exam-cd921bd selected numbers with no problem regressing >2%. Otherwise
+  the incumbent stays and the numbers are recorded here.
+- addresses: F-034; contested slot: factorization engine.

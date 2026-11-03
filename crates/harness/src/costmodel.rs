@@ -21,6 +21,110 @@ use std::collections::BTreeMap;
 use tenferro_einsum::{ContractionTree, Subscripts};
 use truthmill::{DomainId, IndexId, Program, ValueDef, ValueRef};
 
+/// Deterministic contraction pairing: a faithful port of tenferro-einsum
+/// 0.7.1's private `optimize_self_greedy_pairs` (planning/tree.rs) —
+/// repeatedly contract the pair whose intermediate is smallest, ties to the
+/// lexicographically first pair.
+///
+/// Why not ContractionTree::optimize: for >=3 operands it routes through
+/// omeco TreeSA, whose greedy initialization iterates HashMap-backed
+/// incidence lists, so contraction-cost ties resolve in per-process random
+/// order (F-028: same computation scored 0.397 s vs 0.621 s across
+/// processes on mp3). The model must be a pure function of the program.
+fn det_greedy_pairs(inputs: &[Vec<u32>], output: &[u32], size_of: &BTreeMap<u32, usize>) -> Vec<(usize, usize)> {
+    let input_count = inputs.len();
+    if input_count <= 1 {
+        return Vec::new();
+    }
+    let mut available: Vec<usize> = (0..input_count).collect();
+    let mut operand_subs: Vec<Vec<u32>> = inputs.to_vec();
+    let mut pairs = Vec::new();
+    // Count, per label, how many live operands (set membership, matching
+    // upstream) plus the output still need it.
+    let mut needed: BTreeMap<u32, usize> = BTreeMap::new();
+    for &l in output {
+        *needed.entry(l).or_insert(0) += 1;
+    }
+    for subs in &operand_subs {
+        let mut seen = Vec::new();
+        for &l in subs {
+            if !seen.contains(&l) {
+                seen.push(l);
+                *needed.entry(l).or_insert(0) += 1;
+            }
+        }
+    }
+    // Intermediate subscripts: labels of left/right still needed elsewhere,
+    // in left-then-right first-appearance order (matches upstream).
+    let contains = |subs: &[u32], l: u32| subs.iter().any(|&x| x == l);
+    let intermediate = |left: &[u32], right: &[u32], needed: &BTreeMap<u32, usize>| -> Vec<u32> {
+        let mut out = Vec::new();
+        for &l in left.iter().chain(right.iter()) {
+            let selected = contains(left, l) as usize + contains(right, l) as usize;
+            let still_needed = needed.get(&l).copied().unwrap_or(0) > selected;
+            if still_needed && !out.contains(&l) {
+                out.push(l);
+            }
+        }
+        out
+    };
+    let remove_counts = |needed: &mut BTreeMap<u32, usize>, subs: &[u32]| {
+        let mut seen = Vec::new();
+        for &l in subs {
+            if seen.contains(&l) {
+                continue;
+            }
+            seen.push(l);
+            if let Some(c) = needed.get_mut(&l) {
+                *c -= 1;
+                if *c == 0 {
+                    needed.remove(&l);
+                }
+            }
+        }
+    };
+    while available.len() > 1 {
+        let (mut best_i, mut best_j, mut best_cost) = (0, 1, usize::MAX);
+        for i in 0..available.len() {
+            for j in (i + 1)..available.len() {
+                let (li, lj) = (available[i], available[j]);
+                let subs = intermediate(&operand_subs[li], &operand_subs[lj], &needed);
+                let cost = subs
+                    .iter()
+                    .map(|l| size_of.get(l).copied().unwrap_or(1))
+                    .product::<usize>()
+                    .max(1);
+                if cost < best_cost {
+                    best_cost = cost;
+                    best_i = i;
+                    best_j = j;
+                }
+            }
+        }
+        let (left, right) = (available[best_i], available[best_j]);
+        pairs.push((left, right));
+        // Intermediate labels are computed with CURRENT counts (upstream
+        // order), then the pair's counts are removed and the
+        // intermediate's added.
+        let new_subs = intermediate(&operand_subs[left], &operand_subs[right], &needed);
+        remove_counts(&mut needed, &operand_subs[left]);
+        remove_counts(&mut needed, &operand_subs[right]);
+        let mut seen = Vec::new();
+        for &l in &new_subs {
+            if !seen.contains(&l) {
+                seen.push(l);
+                *needed.entry(l).or_insert(0) += 1;
+            }
+        }
+        let new_idx = operand_subs.len();
+        operand_subs.push(new_subs);
+        available.remove(best_j);
+        available.remove(best_i);
+        available.push(new_idx);
+    }
+    pairs
+}
+
 use crate::layout::Layouts;
 
 /// Calibrated rates for one thread count.
@@ -200,7 +304,11 @@ pub fn einsum_cost_model(
         .map(|labels| labels.iter().map(|l| size_of[l]).collect())
         .collect();
     let shape_refs: Vec<&[usize]> = shapes.iter().map(Vec::as_slice).collect();
-    let tree = match ContractionTree::optimize(&subs, &shape_refs) {
+    // Deterministic planning (F-028): ContractionTree::optimize routes >=3
+    // operands through omeco TreeSA, whose tie-breaking is per-process
+    // random; pin the tree with the ported self-greedy pairing instead.
+    let pairs = det_greedy_pairs(phys, output, size_of);
+    let tree = match ContractionTree::from_pairs(&subs, &shape_refs, &pairs) {
         Ok(t) => t,
         Err(_) => return f64::INFINITY,
     };

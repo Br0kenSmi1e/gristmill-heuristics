@@ -226,6 +226,32 @@ study (archive/RESEARCH-v1.md, tag `hl-study-final`).
   trials/exam-cd921bd.jsonl (kind=protected-exam-axis0-addendum).
 - regression: run_exam.py phase B covers all seven problems.
 
+## F-035 Backend n-ary execution planning is nondeterministic per process; measured wall times can differ for identical programs [OPEN]
+- symptom: F-028's mechanism applies to EXECUTION too: interp::prepare
+  (ConcreteEinsumPlan::prepare_subscripts) and eager einsum plan through
+  ContractionTree::optimize -> omeco TreeSA, whose tie-breaking is
+  per-process random. Two `harness time` invocations of the SAME candidate
+  can execute different contraction trees for n-ary ops, moving measured
+  wall time without any code or input change. Candidate contributor to the
+  same-program exam noise (F-027: identical-program cells diverge up to
+  8.9%) and the F-022 anchor drift — neither is claimed explained, just
+  exposed to a mechanism neither considered.
+- verification status: planning nondeterminism itself is VERIFIED (F-028
+  probes: different trees per process for the same op). Its wall-time
+  impact on corpus problems is UNMEASURED — needs per-process repeated
+  timing of an n-ary-heavy candidate (e.g. eom_ccsd) across several
+  processes at fixed load.
+- constraint: tenferro 0.7.1's public concrete-plan API has no
+  explicit-path constructor (EinsumOptimize::Tree/Path exists only on the
+  traced path), so pinning execution trees needs either an upstream change
+  (I-004 material: omeco IncidenceList ordering + rng seeding) or
+  harness-side lowering of n-ary ops to pinned binary chains (interacts
+  with F-002's lesson and I-002's tree slot — decide at M2, not ad hoc).
+- model fidelity note: post-F-028 the model prices det_greedy_pairs trees;
+  execution follows TreeSA's per-process trees for n-ary ops. The
+  difference is bounded by tie width (equal-complexity orderings), now a
+  stated assumption rather than an implicit one.
+
 ## Critic challenges (milestone after I-005 retirement; filed by fresh-context critic, milestone stays OPEN until each is fixed or rebutted with evidence)
 
 ## F-010 I-005 retirement rests on an invalid CCSD control [CLOSED — corrected and rerun]
@@ -562,7 +588,7 @@ study (archive/RESEARCH-v1.md, tag `hl-study-final`).
   recorded min/max fields.
 - data: trials/exam-cd921bd.jsonl, trials/exam-cd921bd-runs.jsonl.
 
-## F-028 Selector is nondeterministic across identical-source invocations; unremarked [OPEN]
+## F-028 Selector is nondeterministic across identical-source invocations; unremarked [CLOSED — model-side deterministic planner; execution side filed as F-035]
 - symptom: phase-A candidate regeneration ran twice (voided a80b14e
   attempt, then cd921bd). Harness source is byte-identical between those
   commits (git diff a80b14e..cd921bd touches only tools/run_exam.py), yet
@@ -574,10 +600,38 @@ study (archive/RESEARCH-v1.md, tag `hl-study-final`).
   responses) and the fallback-equivalence regression tests presume a
   deterministic emitter; that the search itself is nondeterministic is
   recorded nowhere.
+- mechanism: VERIFIED end-to-end. (1) Reproduced on mp3 with the committed
+  probe (`harness select-probe`): the SAME initial-state computation hash
+  scored 0.397 s vs 0.621 s across processes, and repeated scoring within
+  one process was non-idempotent (rep0=rep1!=rep2). (2) The divergence is
+  inside the model's tree walk: tenferro's ContractionTree::optimize routes
+  >=3-operand einsums to omeco TreeSA; its greedy initializer iterates
+  HashMap-backed incidence lists (omeco-0.2.6 greedy.rs), so
+  contraction-cost ties resolve in per-process/per-call random order (std
+  RandomState advances per HashMap::new(), explaining the in-process
+  non-idempotence). Observed consequence: the same n-ary op got different
+  contraction trees (swapped step order, swapped lhs/rhs) with different
+  clean/reduce classifications.
+- fix: the model no longer calls ContractionTree::optimize. costmodel.rs
+  pins the tree with `det_greedy_pairs`, a faithful port of tenferro's
+  private deterministic `optimize_self_greedy_pairs` (set-membership
+  counts, first-appearance intermediate order), then
+  ContractionTree::from_pairs. Selector/model scoring is now deterministic
+  (mp3 select traces and full records bit-identical across processes;
+  model-ci still passes).
+- regression: `determinism_tests::model_scoring_is_deterministic_across_
+  repeated_calls` (fails pre-fix: in-process scores differed); H_TRACE
+  stream diffing via the committed select-probe instrument.
+- SCOPE NOTE: this pins the MODEL. Execution planning (interp::prepare,
+  eager einsum) still routes through the same nondeterministic backend
+  path per process — that defect and its timing consequences are F-035.
+  The model now prices a deterministic canonical tree that execution may
+  not follow for n-ary ops; the fidelity gap is recorded in F-035.
 - data: trials/exam-a80b14e-runs.jsonl vs trials/exam-cd921bd-runs.jsonl
-  (ccsd_lambda phase-A lines).
+  (ccsd_lambda phase-A lines); repro streams referenced in the f028 trial
+  line.
 
-## F-029 "Axis 1 green" is a 6/7 claim; ccsd_t was timed on a stale v1-era candidate with no hash pinning, and its slowness mechanism is asserted without a profile [OPEN]
+## F-029 "Axis 1 green" is a 6/7 claim; ccsd_t was timed on a stale v1-era candidate with no hash pinning, and its slowness mechanism is asserted without a profile [OPEN — Axis-1 half resolved: ccsd_t is RED; profile pending]
 - symptom: exam phase C flop_ratios lists six problems; ccsd_t — a corpus
   problem whose Axis-1 check is execution-free — is absent. F-026 closed
   the identical omission for phase B only; the phase-C half persists and is
@@ -596,8 +650,29 @@ study (archive/RESEARCH-v1.md, tag `hl-study-final`).
   the attribution for the shipped candidate is asserted, not verified.
 - data: trials/exam-cd921bd.jsonl phase C/D ccsd_t rows; git log
   benches/candidates/ccsd_t_selected.json.
+- resolution (partial, trials/f029-ccsd_t-axis1.jsonl): accepted. ccsd_t's
+  Axis-1 check is execution-free and now recorded: the stale v1-era
+  ccsd_t_selected (sha 250d550e22625247, matching the critic's pin) is
+  Axis-1 RED — 40.6x cap at (8,32), 81.0x at (16,64). Exam-cd921bd's
+  "Axis 1 green" was a 6/7 claim; RESEARCH.md corrected. run_exam.py now
+  covers ccsd_t in phase C (flops --candidate, a new flag) and pins
+  candidate sha256 in phase D. Regenerating ccsd_t under v2 would force
+  the F-018 fallback (1.0x by construction) but is not claimed.
+  REMAINING: the 27.1 s/iter attribution to the reduction class is still
+  asserted, not profiled — per-op profile of THIS candidate at (8,32)
+  pending a clean timing window.
 
-## F-030 F-016's milestone-gated model-v2-on-ADC2 evaluation was due at this milestone and did not happen; the miss is unrecorded [OPEN]
+## F-030 F-016's milestone-gated model-v2-on-ADC2 evaluation was due at this milestone and did not happen; the miss is unrecorded [CLOSED — evaluation performed, gap survives v2]
+- resolution: accepted; the evaluation ran late-but-in-milestone
+  (trials/f030-v2-heldout-eval.jsonl, prediction-only against archived
+  measured ranges; no held-out tuning). RESULT: model v2 does NOT close
+  the ADC2 gap error — 1.135x predicted vs 1.60–1.92x measured (v1 was
+  1.14x; unchanged). The ADC2 underprediction is NOT a reduction-class
+  effect; candidate classes are the F-016 k-heavy/low-rank-out gaps.
+  CCD deferred question answered: v2 predicts the archived selected 17%
+  WORSE than baseline; a8bf146 measured parity — a misrank, recorded with
+  the caveat that the measured side is from the unanchored-profile exam
+  (refined under F-033's release re-anchor). F-016 remains OPEN.
 - symptom: F-016's response and RESEARCH.md open question 4 both state
   model v2 may be evaluated on the held-out ADC2 gap "only at a
   milestone." The exam-cd921bd milestone closed (EXAM done, TOURNAMENT
@@ -611,7 +686,13 @@ study (archive/RESEARCH-v1.md, tag `hl-study-final`).
   ~parity") to "the milestone"; the milestone produced the CCD measurement
   (1002.7 vs 1007.0 ms — parity) and no ledger line evaluates it.
 
-## F-031 Protected exams silently standardize on one of SPEC's three performance sizes [OPEN]
+## F-031 Protected exams silently standardize on one of SPEC's three performance sizes [CLOSED — convention documented in SPEC]
+- resolution: accepted. SPEC now documents the convention: protected exams
+  run performance axes at (16,64) only — the middle size, chosen for cost
+  control (the a8bf146/cd921bd exams already take >1 h); (8,40) and (32,96)
+  are deferred until a size-sensitivity question is on the table (any exam
+  claim involving scaling MUST then re-run all three). Single-size exam
+  numbers are labeled single-size in RESEARCH.md.
 - symptom: SPEC's performance corpus sizes are {(8,40),(16,64),(32,96)}
   with ccsd_t at (8,32). Both protected exams ran only (16,64). F-015
   forced a documented convention for the Axis-0 (3,5) size; no document
@@ -620,7 +701,7 @@ study (archive/RESEARCH-v1.md, tag `hl-study-final`).
   quoted in RESEARCH.md are single-size claims carrying a corpus-sizes
   label.
 
-## F-032 Post-F-018 Axis 1 is self-certifying on fallback problems; the gate no longer measures compiler quality there [OPEN]
+## F-032 Post-F-018 Axis 1 is self-certifying on fallback problems; the gate no longer measures compiler quality there [CLOSED — semantics amended: Axis 1 is a safety floor, discrimination is Axis 2]
 - symptom: exam phase C ratios of exactly 1.0 for ccd/ccsd/ccsd_lambda/
   eom_ccsd/adc2 compare the emitted verified baseline to itself
   (flop_fallback: true on all five phase-A lines). On those problems the
@@ -632,6 +713,19 @@ study (archive/RESEARCH-v1.md, tag `hl-study-final`).
   thereby ceased to discriminate the compiler from the baseline on 5/6
   problems, nor that the tournament displacement rule's Axis-1 clause is
   now trivially satisfiable by any challenger that emits the fallback.
+- resolution: accepted as a semantics fix, not a bug. F-018 deliberately
+  made Axis 1 a SAFETY FLOOR (the compiler never ships worse FLOPs than
+  the same-equation baseline) rather than a quality measure; the earlier
+  failure was assuming green WITHOUT the cap, not green-by-construction
+  with it. What is now recorded: (a) Axis-1 exam reporting must
+  distinguish "green by genuine search output" (currently: mp3 only,
+  0.969x) from "green by fallback identity" (the other five);
+  (b) the contested-slot displacement rule's Axis-1 clause is now a floor
+  any fallback-capable challenger satisfies, so displacement
+  discrimination rests entirely on the Axis-2 clause; (c) SPEC Axis-1
+  text amended to say this. The residual risk the critic names is real:
+  a green Axis-1 milestone no longer evidences search quality — that
+  evidence now lives only in Axis 2 and in the non-fallback count.
 
 ## F-033 All exam wall-time numbers come from a debug-profile binary; rationale and ratio validity unrecorded [OPEN]
 - symptom: the exam line pins binary_profile "debug" (harness sha256
@@ -644,7 +738,21 @@ study (archive/RESEARCH-v1.md, tag `hl-study-final`).
   filed as an open question nowhere. SPEC measures steady-state wall time
   of the compiler's artifact; the exam measured a debug harness.
 
-## F-034 Tournament re-seats the incumbent without comparison for a second consecutive milestone; the only implemented challenger is permanently "not evaluable" [OPEN]
+## F-034 Tournament re-seats the incumbent without comparison for a second consecutive milestone; the only implemented challenger is permanently "not evaluable" [CLOSED — I-008 written; mechanical tournament: challenger emits identical programs]
+- resolution: accepted. I-008 (IDEAS.md) gives the structural proposer a
+  pre-registered adoption rule. The tournament then ran mechanically:
+  structural candidates regenerated under the current engine (model v2 +
+  F-018 cap) on {ccd, ccsd, ccsd_lambda, eom_ccsd, adc2}. The proposer DID
+  find model-priced improving moves (5-17 accepted steps per problem) but
+  every result overshot the Axis-1 cap, so all five emitted candidates are
+  program-identical to the incumbent's baseline fallbacks (verified by
+  parsed-Program equality). A challenger emitting the identical program
+  cannot beat the incumbent on Axis 2: displacement FAILS, incumbent
+  stays, no timing runs needed (same program => same execution). mp3: no
+  structural action space exists; ccsd_t: F-017-blocked. Recorded in
+  trials/tournament-cd921bd.jsonl. The substantive finding: under v2 the
+  structural space's improvements are all FLOP-over-cap — the slot's real
+  contest now requires beating baseline FLOPs AND wall time together.
 - symptom: tournament-cd921bd (like tournament-a8bf146) disposes I-001 and
   the structural proposer as NOT EVALUABLE — the proposer because it has
   never been given an I-entry with a pre-registered adoption rule. That
