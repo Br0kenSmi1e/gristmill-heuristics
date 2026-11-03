@@ -12,6 +12,8 @@ fixture, fix, regression pointer. CLOSED entries are kept for audit
 - **F-016** model error untracked on held-out — calibration owned by M1;
   new v2 gap classes (k-heavy low-rank-out, lincomb rank-6) logged
 - **F-017** CCSD(T) memory: HARD blocker, no full-size reruns
+- **F-027..F-034** open critic challenges on the exam-cd921bd milestone
+  (see the third "Critic challenges" section)
 
 Entries below are in rough filing order, not priority order; the two
 "Critic challenges" sections are milestone-review records.
@@ -536,3 +538,120 @@ study (archive/RESEARCH-v1.md, tag `hl-study-final`).
   fixtures with a hard allocation budget, followed by static estimation.
   No further full CCSD(T) execution until a schedule is statically shown to
   fit well below the existing 6 GB guard.
+
+## Critic challenges (milestone after exam-cd921bd; filed by fresh-context critic, milestone stays OPEN until each is fixed or rebutted with evidence)
+
+## F-027 Exam Axis-2 batch ran under climbing load; identical-program cells diverge up to 8.9%; the milestone's only genuine win is barely above demonstrated same-batch noise and is unreplicated [OPEN]
+- symptom: exam-cd921bd load_at_start [0.75,1.24,1.49] vs load_at_end
+  [7.69,4.37,3.25]; per-run start loads range 1.74-5.58. Within single
+  10-iter runs the recorded min/max fields show adc2 t16 spans 93.96-344.06
+  ms (gristmill) and 94.20-198.36 (selected) — 3.7x dispersion; ccsd_lambda
+  t16 spans ~1.6x. The five fallback-vs-baseline cells are the SAME
+  computation timed twice (identical log10_flops and checksums), yet their
+  medians diverge up to 1.089x (adc2 t16 144.10 vs 156.88; ccsd t16 654.51
+  vs 710.72 = 1.086x). That is a direct same-batch measurement of
+  noise-on-identical-programs — and the exam's only genuine Axis-2 win at
+  t16 (mp3 1.139x) barely exceeds it; only mp3 t1 (1.194x) clearly does.
+  Neither mp3 cell was replicated in a second session; F-022 documented
+  15.6% cross-session drift on a baseline anchor. RESEARCH.md reports the
+  fallback cells as "noise (+-9%)" without connecting that measurement to
+  the significance of the mp3 win, and no entry records the adc2 within-run
+  3.7x dispersion.
+- guard gap: the F-006 load guard samples only at run start; mid-run
+  contamination is invisible to it by design and is visible here in the
+  recorded min/max fields.
+- data: trials/exam-cd921bd.jsonl, trials/exam-cd921bd-runs.jsonl.
+
+## F-028 Selector is nondeterministic across identical-source invocations; unremarked [OPEN]
+- symptom: phase-A candidate regeneration ran twice (voided a80b14e
+  attempt, then cd921bd). Harness source is byte-identical between those
+  commits (git diff a80b14e..cd921bd touches only tools/run_exam.py), yet
+  the ccsd_lambda traces diverge: step 0 is "paren def0 term19 cut1" vs
+  "cut2", and step-1 terminal predictions differ (1.3467922 vs 1.3470174
+  s). The final candidate sha256 matched (9819962d4525e496) only by tie
+  convergence; equal-scoring candidates appear to be enumerated/broken
+  nondeterministically. Hash-pinned provenance (F-018/F-021/F-024
+  responses) and the fallback-equivalence regression tests presume a
+  deterministic emitter; that the search itself is nondeterministic is
+  recorded nowhere.
+- data: trials/exam-a80b14e-runs.jsonl vs trials/exam-cd921bd-runs.jsonl
+  (ccsd_lambda phase-A lines).
+
+## F-029 "Axis 1 green" is a 6/7 claim; ccsd_t was timed on a stale v1-era candidate with no hash pinning, and its slowness mechanism is asserted without a profile [OPEN]
+- symptom: exam phase C flop_ratios lists six problems; ccsd_t — a corpus
+  problem whose Axis-1 check is execution-free — is absent. F-026 closed
+  the identical omission for phase B only; the phase-C half persists and is
+  recorded nowhere in the exam line, the milestone commit message, or
+  RESEARCH.md ("Axis 1 is green for the first time", "all six <=1.05x").
+  Phase D timed benches/candidates/ccsd_t_selected.json, last committed at
+  967e26a (2026-10-28, v1 pricing era, pre-F-018 cap, never regenerated
+  under v2; sha256 250d550e... matches the a8bf146 pin). Neither ccsd_t
+  timed candidate carries a candidate_sha256 anywhere in the cd921bd
+  records, so the F-021/F-018 resolution ("every timed candidate pinned by
+  SHA-256") does not hold for the problem where the compiler is most likely
+  losing. RESEARCH.md attributes the 27.1 s/iter t1 to "the
+  reduction-class slowness in vivo"; the reduction-class mechanism was
+  verified on ccsd_t_struct at (4,8) and on the calibration grid (F-004),
+  but no per-op profile of THIS candidate at (8,32) exists in trials/ —
+  the attribution for the shipped candidate is asserted, not verified.
+- data: trials/exam-cd921bd.jsonl phase C/D ccsd_t rows; git log
+  benches/candidates/ccsd_t_selected.json.
+
+## F-030 F-016's milestone-gated model-v2-on-ADC2 evaluation was due at this milestone and did not happen; the miss is unrecorded [OPEN]
+- symptom: F-016's response and RESEARCH.md open question 4 both state
+  model v2 may be evaluated on the held-out ADC2 gap "only at a
+  milestone." The exam-cd921bd milestone closed (EXAM done, TOURNAMENT
+  recorded, RESEARCH.md updated) with no trial line evaluating v2's
+  predicted ADC2 gap against measurement — and none can be reconstructed:
+  phase A's adc2 select fell back immediately with predicted_s null, so
+  the v2-predicted selected-vs-gristmill ADC2 gap exists nowhere in the
+  record. F-016 still rests on v1-era numbers (1.14x predicted vs
+  1.60-1.92x measured). Same pattern for CCD: trials/model-v2.jsonl
+  explicitly deferred the v2-misranking question ("708 vs 831 vs measured
+  ~parity") to "the milestone"; the milestone produced the CCD measurement
+  (1002.7 vs 1007.0 ms — parity) and no ledger line evaluates it.
+
+## F-031 Protected exams silently standardize on one of SPEC's three performance sizes [OPEN]
+- symptom: SPEC's performance corpus sizes are {(8,40),(16,64),(32,96)}
+  with ccsd_t at (8,32). Both protected exams ran only (16,64). F-015
+  forced a documented convention for the Axis-0 (3,5) size; no document
+  records why the performance axes use (16,64) alone, or whether (8,40)
+  and (32,96) are deferred, dropped, or forgotten. The Axis-2 geomeans
+  quoted in RESEARCH.md are single-size claims carrying a corpus-sizes
+  label.
+
+## F-032 Post-F-018 Axis 1 is self-certifying on fallback problems; the gate no longer measures compiler quality there [OPEN]
+- symptom: exam phase C ratios of exactly 1.0 for ccd/ccsd/ccsd_lambda/
+  eom_ccsd/adc2 compare the emitted verified baseline to itself
+  (flop_fallback: true on all five phase-A lines). On those problems the
+  gate cannot fail as long as baseline emission works, so "Axis 1 green
+  for the first time" reproduces — by construction of the fallback — the
+  green-by-construction condition whose earlier assumption-of-green F-018
+  itself falsified. RESEARCH.md discloses the identity ("five by
+  baseline-fallback identity"), but no entry records that Axis 1 has
+  thereby ceased to discriminate the compiler from the baseline on 5/6
+  problems, nor that the tournament displacement rule's Axis-1 clause is
+  now trivially satisfiable by any challenger that emits the fallback.
+
+## F-033 All exam wall-time numbers come from a debug-profile binary; rationale and ratio validity unrecorded [OPEN]
+- symptom: the exam line pins binary_profile "debug" (harness sha256
+  d761e7972804b49f). a8bf146's unanchored-profile defect is fixed, but the
+  choice of a debug build for protected wall-time evaluation is justified
+  nowhere. Debug builds change dispatch/permute overhead relative to GEMM
+  — precisely the quantities the cost model and the "layout dominates"
+  invariant are calibrated on — and whether debug-vs-release preserves the
+  measured ratios (including the mp3 win) has never been checked and is
+  filed as an open question nowhere. SPEC measures steady-state wall time
+  of the compiler's artifact; the exam measured a debug harness.
+
+## F-034 Tournament re-seats the incumbent without comparison for a second consecutive milestone; the only implemented challenger is permanently "not evaluable" [OPEN]
+- symptom: tournament-cd921bd (like tournament-a8bf146) disposes I-001 and
+  the structural proposer as NOT EVALUABLE — the proposer because it has
+  never been given an I-entry with a pre-registered adoption rule. That
+  bookkeeping gap has now protected the incumbent at two consecutive
+  milestones, while the proposer is implemented (benches/candidates/
+  *_struct.json exist; it was F-004's exposing case and F-005's failed
+  fallback). The mechanical-application rule is being applied to a
+  tournament whose challenger roster the project itself left unwritten;
+  the slot is uncontested by procedure, not by evidence. No entry
+  schedules writing the missing I-entry or records a decision not to.
