@@ -79,9 +79,14 @@ PROTOCOL.md. What is broken: FAILURES.md. What we might try: IDEAS.md.
 
 ## Next investment
 
-Milestone after exam-cd921bd: EXAM done (green Axis 1, geomean 1.030/1.031),
-TOURNAMENT disposition recorded (no evaluable challenger; slot unchanged),
-CRITIC pending (fresh-context session). Then: M1 tail = calibration-grid
-extension for the F-016 gap classes (k-heavy low-rank-out contractions at
-0.26 GF/s, rank-6 lincomb floor); M2 = F-005/I-006 enumeration budget and
-v2-era search quality (F-007 reframed).
+Milestone exam-cd921bd CLOSED: EXAM + TOURNAMENT done, CRITIC challenges
+F-027..F-034 answered (F-028 deterministic planner; F-033 release ratios
+falsified the debug mp3 win's magnitude; F-034's tournament run
+mechanically — challenger emits identical programs). M2 algorithm
+selection (I-007, tested): model v3 FIRST — F-016's gap classes must be
+priced before space/search conclusions are sound on ccd/ccsd; adc2 is
+genuinely space-bound; I-001 (search depth) deprioritized everywhere.
+Queued: F-037 (selector prefilter defect, cheap and independent), F-036
+(release-profile migration), F-005/I-006 (enumeration budget), F-035
+(execution-tree nondeterminism; whether the compiler owns tree selection
+is an M2 decision interacting with I-002).
