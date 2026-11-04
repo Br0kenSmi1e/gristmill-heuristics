@@ -404,7 +404,11 @@ def canon_record(sig):
 def subset_sigs(cfactors, cdom, cfree):
     """All proper factor subsets (size>=2) of a canonical record, each with
     its context free set, canonicalized. Yields (frozenset idxs, sig,
-    free_in_context) — the last in the record's own label namespace."""
+    free_in_context, ren, sgn) — free/ren in the record's own label
+    namespace; sgn = orbit sign of the block instance vs its canonical
+    form (instance = sgn x canonical). NOTE: mining does not commute with
+    canonical relabeling, so sgn can be -1 even though the parent's
+    factors were orbit-mined in their original term namespace (B-006)."""
     n = len(cfactors)
     for size in range(2, n):
         for idxs in combinations(range(n), size):
@@ -416,8 +420,8 @@ def subset_sigs(cfactors, cdom, cfree):
                 if j not in idxs:
                     outside |= set(ls)
             free = labs & outside
-            sig, ren = canon_sig(facs, cdom, free, want_map=True)
-            yield idxs, sig, free, ren
+            sig, ren, sgn = canon_full(facs, cdom, free)
+            yield idxs, sig, free, ren, sgn
 
 
 def build_universe(terms):
@@ -456,7 +460,7 @@ def build_universe(terms):
             continue
         cfactors, cfree, cdom = canon_record(sig)
         U[sig] = {"cfactors": cfactors, "cfree": cfree, "cdom": cdom}
-        for _, subsig, _, _ in subset_sigs(cfactors, cdom, cfree):
+        for _, subsig, _, _, _ in subset_sigs(cfactors, cdom, cfree):
             if subsig not in U:
                 work.append(subsig)
     return U, term_blocks, term_entries
@@ -590,12 +594,11 @@ def solve_global(terms, ext, time_limit=300, sums=True,
     sub_of = {}
     for sig, rec in U.items():
         subs = []
-        for idxs, subsig, subfree, subren in subset_sigs(rec["cfactors"],
-                                                         rec["cdom"],
-                                                         rec["cfree"]):
-            subs.append((idxs, subsig, subfree, subren))
+        for idxs, subsig, subfree, subren, subsgn in subset_sigs(
+                rec["cfactors"], rec["cdom"], rec["cfree"]):
+            subs.append((idxs, subsig, subfree, subren, subsgn))
         sub_of[sig] = subs
-        for _, ss, _, _ in subs:
+        for _, ss, _, _, _ in subs:
             nctx[ss] += 1
 
     cand = [s for s in U if nctx[s] >= 2]
@@ -605,8 +608,8 @@ def solve_global(terms, ext, time_limit=300, sums=True,
     forms = {}   # sig -> [(cover, cost)]  cover = tuple of (idxs, subsig)
     for s in cand:
         rec = U[s]
-        blocks = [(idxs, ss, free_in_m, ren_in_m) for
-                  idxs, ss, free_in_m, ren_in_m in sub_of[s]
+        blocks = [(idxs, ss, free_in_m, ren_in_m, sgn_in_m) for
+                  idxs, ss, free_in_m, ren_in_m, sgn_in_m in sub_of[s]
                   if ss in candset]
         atom_sets = [set(ls) for _, ls in rec["cfactors"]]
         forms[s] = cover_choices(atom_sets, blocks, rec["cfree"],
@@ -991,12 +994,13 @@ def solve_definition(terms, ext, cap=None):
 
 # ---------------------------------------------------------------- emission
 
-def emit_binary_tree(values, leaf_info, out_order, dom, ext):
+def emit_binary_tree(values, leaf_info, out_order, dom, ext, sign=1):
     """Emit a binary contraction tree over `leaf_info` = [(argref_dict,
     labels tuple in that arg's own axis order)]. The root's declared output
     order is `out_order`; internal nodes keep labels needed later, sorted.
+    `sign` folds a +/-1 into the root step's coeff (B-006 formation signs).
     Returns (argref of result, output labels tuple)."""
-    if len(leaf_info) == 1:
+    if len(leaf_info) == 1 and sign == 1:
         ref, ls = leaf_info[0]
         if tuple(ls) == tuple(out_order):
             return ref, tuple(out_order)
@@ -1004,6 +1008,18 @@ def emit_binary_tree(values, leaf_info, out_order, dom, ext):
         labs = sorted(set(ls) | set(out_order))
         values.append({"Einsum": {
             "coeff": [1, 1],
+            "code": {"inputs": [list(ls)], "output": list(out_order),
+                     "domains": {str(l): dom[l] for l in labs}},
+            "args": [ref]}})
+        return {"Value": vid}, tuple(out_order)
+
+    if len(leaf_info) == 1:
+        # sign == -1 with a single leaf: emit a scaling step
+        ref, ls = leaf_info[0]
+        vid = len(values)
+        labs = sorted(set(ls) | set(out_order))
+        values.append({"Einsum": {
+            "coeff": [sign, 1],
             "code": {"inputs": [list(ls)], "output": list(out_order),
                      "domains": {str(l): dom[l] for l in labs}},
             "args": [ref]}})
@@ -1028,7 +1044,7 @@ def emit_binary_tree(values, leaf_info, out_order, dom, ext):
         vid = len(values)
         labs = sorted(set(la) | set(lb) | set(out))
         values.append({"Einsum": {
-            "coeff": [1, 1],
+            "coeff": [sign if is_root else 1, 1],
             "code": {"inputs": [list(la), list(lb)], "output": out,
                      "domains": {str(l): dom[l] for l in labs}},
             "args": [refa, refb]}})
@@ -1234,7 +1250,10 @@ def emit_global(solpack, ext):
         used = frozenset().union(*(b[0] for b in cover)) if cover \
             else frozenset()
         leaf_info = []
-        for (idxs, subsig, _free, ren) in cover:
+        fsign = 1   # product of block orbit signs (B-006): the block
+        # instance inside this canonical form is fsign x canonical
+        for (idxs, subsig, _free, ren, bsgn) in cover:
+            fsign *= bsgn
             bref, border = sig_ref[subsig]
             ren_inv = {v: k for k, v in ren.items()}
             leaf_info.append((bref, tuple(ren_inv[c] for c in border)))
@@ -1242,7 +1261,7 @@ def emit_global(solpack, ext):
             if i not in used:
                 leaf_info.append(({"Tensor": tid}, tuple(ls)))
         ref, out = emit_binary_tree(values, leaf_info, list(rec["cfree"]),
-                                    rec["cdom"], ext)
+                                    rec["cdom"], ext, sign=fsign)
         sig_ref[s] = (ref, out)
 
     def cofactor_ref(gsig):
@@ -1318,69 +1337,27 @@ def emit_global(solpack, ext):
                         leaf_info.append(({"Tensor": tid}, tuple(ls)))
                 ref, _ = emit_binary_tree(values, leaf_info, keep_term,
                                           term["dom"], ext)
-                # members: identity ride directly; others get their own
-                # plain rest evaluation (sound, charged in the ILP)
+                # members: identity ride directly; non-identity members
+                # are emitted separately as plain full evaluations (the
+                # post-family section) and charged in the ILP — they must
+                # NOT join the S-sum (B-006: the pi-mapped own-rest member
+                # cancels the rep's rest under antisymmetry).
                 for t in members_of[local_rep]:
                     pi = perms[t]
                     is_id = all(p == q for p, q in enumerate(pi))
-                    if is_id:
-                        sum_args.append(ref)
-                        sum_inputs.append(list(s_order))
-                        if t == local_rep:
-                            sum_coeffs.append(terms[t]["coeff"]
-                                              * s_g * s_rest)
-                        else:
-                            s_g_m, s_rest_m = member_instance_signs(
-                                terms[t], len(rentry[1]), gsig, r)
-                            sum_coeffs.append(terms[t]["coeff"]
-                                              * s_g_m * s_rest_m
-                                              * s_rest_rep_written * s_rest)
+                    if not is_id:
+                        continue
+                    sum_args.append(ref)
+                    sum_inputs.append(list(s_order))
+                    if t == local_rep:
+                        sum_coeffs.append(terms[t]["coeff"]
+                                          * s_g * s_rest)
                     else:
-                        mterm = terms[t]
-                        # member's g-instance sign
-                        s_g_m = None
-                        for cidx in combinations(
-                                range(len(mterm["factors"])), len(rentry[1])):
-                            facs = [mterm["factors"][i] for i in cidx]
-                            labs = {l for _, ls in facs for l in ls}
-                            outside = set(range(r))
-                            for j, (_, ls) in enumerate(mterm["factors"]):
-                                if j not in cidx:
-                                    outside |= set(ls)
-                            free = labs & outside
-                            msig, mren, msgn = canon_full(facs,
-                                                          mterm["dom"], free)
-                            if msig == gsig:
-                                s_g_m = msgn
-                                mren_f = mren
-                                gidxs_m = frozenset(cidx)
-                                break
-                        assert s_g_m is not None
-                        mren_inv = {v: k for k, v in mren_f.items()}
-                        mrest = [mterm["factors"][i]
-                                 for i in range(len(mterm["factors"]))
-                                 if i not in gidxs_m]
-                        mkeep = ([mren_inv[c] for c in cf_rest]
-                                 + [p for p in range(r)
-                                    if p in {l for _, ls in mrest
-                                             for l in ls}])
-                        # member's rest sign vs canonical
-                        s_rest_m = 1  # emitted as written
-                        # rep's rest sign was folded via s_rest; the member
-                        # relation to the SAME canonical rest is s_rest_m
-                        mref, mout = emit_binary_tree(
-                            values, [({"Tensor": tid}, tuple(ls))
-                                     for tid, ls in mrest], mkeep,
-                            mterm["dom"], ext)
-                        sum_args.append(mref)
-                        sum_inputs.append(
-                            [S_BASE + c for c in cf_rest]
-                            + [pi[p] for p in mout[len(cf_rest):]])
-                        # member's rest emitted as written: its sign vs
-                        # canonical is s_rest_m; rep's rest (emitted) had
-                        # sign s_rest; canonical is shared
-                        sum_coeffs.append(terms[t]["coeff"] * s_g_m
-                                          * s_rest_m)
+                        s_g_m, s_rest_m = member_instance_signs(
+                            terms[t], len(rentry[1]), gsig, r)
+                        sum_coeffs.append(terms[t]["coeff"]
+                                          * s_g_m * s_rest_m
+                                          * s_rest_rep_written * s_rest)
             vid = len(values)
             values.append({"LinComb": {
                 "coeff": [[c.numerator, c.denominator] for c in sum_coeffs],

@@ -218,3 +218,38 @@ tools/joint_search/proto.py.
 Synthetic regression fixtures (pass): /tmp/antisym_test.json (perm pair +
 antisymmetry), /tmp/antisym_test2.json (pair + shared subterm),
 /tmp/ccsd_energy.json (3-term scalar).
+
+## B-006 closed: two sign/frame errors (milestone)
+
+Verified numerically with a harness-faithful numpy model
+(tools/joint_search/diag_contrib.py — per-(tensor, domain-pattern) blocks,
+stabilizer projection, generator-orbit propagation, mirroring
+crates/harness/src/dense.rs):
+
+1. **Formation orbit-sign drop**: `subset_sigs` discarded the orbit sign of
+   a block instance inside a parent's canonical form. Mining happens in the
+   original term label space and does not commute with canonical relabeling,
+   so canonical parents can contain block instances with sign -1. Every
+   materialization of the parent was then globally off by -1. Fixed by
+   threading the sign through forms and folding the product into the
+   formation tree's root einsum coeff.
+2. **Perm-member double-emit/cancel**: family S-sums emitted a non-identity
+   perm member's own rest with a pi-swapped placement AND the post-family
+   section emitted the same member standalone (the ILP only charges the
+   standalone). The pi-swapped member rest is exactly the negative of the
+   rep's rest under antisymmetry, so the rep's term silently canceled.
+   Fixed: S-sums skip non-identity members entirely.
+
+Battery (trials/20261104-190100.jsonl), verified at oracle (3,5), FLOPs at
+(16,64): mp3 0.6566x PASS | ccd 1.0163x | ccsd 1.1039x | adc2 1.0031x —
+all four verify with sym on. New regression fixture
+ccsd_doubles_36_37_50_51.json; the old B-006 fixture now guards (1).
+
+Tooling added: tools/joint_search/term_bisect.py (ddmin over term subsets;
+the file must not be named bisect.py — stdlib collision),
+tools/joint_search/diag_contrib.py (per-contribution numeric bisector).
+
+Remaining realization gaps vs the sym-relaxed ILP optima (0.766 ccsd /
+0.878 ccd / 0.748 adc2): the emitted solves lock perm-membered reps out of
+partial-keep families (C-010) and adc2's emitted price is ~7.3M above its
+ILP objective (B-007 lincomb accounting — decisive for adc2's 1.0031x).

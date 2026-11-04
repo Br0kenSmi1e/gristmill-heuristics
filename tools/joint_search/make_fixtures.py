@@ -89,8 +89,10 @@ dump("ccsd_energy.json", {
         "outputs": [3]},
 })
 
-# ccsd_doubles minimal failing set for B-006: terms {32,33,37,42},
-# extracted from benches/chemistry/ccsd.json via proto.parse_terms.
+# ccsd_doubles minimal failing sets for B-006, extracted from
+# benches/chemistry/ccsd.json via proto.parse_terms. {38,39,40,42,43}
+# exposed the formation orbit-sign drop; {36,37,50,51} exposed the
+# non-identity perm member double-emit/cancellation.
 import sys
 sys.path.insert(0, HERE)
 import proto  # noqa: E402
@@ -98,21 +100,28 @@ import proto  # noqa: E402
 problem = json.load(open("benches/chemistry/ccsd.json"))
 proto.SYMS = problem["symmetries"]
 terms_all, r = proto.parse_terms(problem, 82)
-idxs = [38, 39, 40, 42, 43]
-values = []
-for i in idxs:
-    t = terms_all[i]
-    values.append({"Einsum": {
-        "coeff": [t["coeff"].numerator, t["coeff"].denominator],
-        "code": {"inputs": [list(ls) for _, ls in t["factors"]],
-                 "output": list(range(r)),
-                 "domains": {str(l): d for l, d in t["dom"].items()}},
-        "args": [{"Tensor": tid} for tid, _ in t["factors"]]}})
-out_doms = {str(l): terms_all[idxs[0]]["dom"][l] for l in range(r)}
-values.append({"LinComb": {"coeff": [[1,1]]*len(idxs),
-    "code": {"inputs": [list(range(r))]*len(idxs),
-             "output": list(range(r)), "domains": out_doms},
-    "args": [{"Value": i} for i in range(len(idxs))]}})
-dump("ccsd_doubles_38_39_40_42_43.json",
-     {"sizes": {"0": 3, "1": 5}, "symmetries": problem["symmetries"],
-      "reference": {"values": values, "outputs": [len(values)-1]}})
+
+
+def dump_term_subset(name, idxs):
+    values = []
+    for i in idxs:
+        t = terms_all[i]
+        values.append({"Einsum": {
+            "coeff": [t["coeff"].numerator, t["coeff"].denominator],
+            "code": {"inputs": [list(ls) for _, ls in t["factors"]],
+                     "output": list(range(r)),
+                     "domains": {str(l): d for l, d in t["dom"].items()}},
+            "args": [{"Tensor": tid} for tid, _ in t["factors"]]}})
+    out_doms = {str(l): terms_all[idxs[0]]["dom"][l] for l in range(r)}
+    values.append({"LinComb": {"coeff": [[1, 1]] * len(idxs),
+        "code": {"inputs": [list(range(r))] * len(idxs),
+                 "output": list(range(r)), "domains": out_doms},
+        "args": [{"Value": i} for i in range(len(idxs))]}})
+    dump(name, {"sizes": {"0": 3, "1": 5},
+                "symmetries": problem["symmetries"],
+                "reference": {"values": values,
+                              "outputs": [len(values) - 1]}})
+
+
+dump_term_subset("ccsd_doubles_38_39_40_42_43.json", [38, 39, 40, 42, 43])
+dump_term_subset("ccsd_doubles_36_37_50_51.json", [36, 37, 50, 51])
