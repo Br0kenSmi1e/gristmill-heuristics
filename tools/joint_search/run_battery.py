@@ -82,8 +82,8 @@ def main():
         print(f"load {load} > 8, refusing (shared machine)")
         sys.exit(1)
 
-    run(["/tmp/proto-venv/bin/python" if os.path.exists(
-        "/tmp/proto-venv/bin/python") else sys.executable,
+    venv_py = os.path.join(HERE, ".venv", "bin", "python")
+    run([venv_py if os.path.exists(venv_py) else sys.executable,
         os.path.join(HERE, "make_fixtures.py")], cwd=ROOT)
 
     record = {"git": git_head(), "note": label, "load": load,
