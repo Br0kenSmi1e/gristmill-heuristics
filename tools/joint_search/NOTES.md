@@ -320,3 +320,22 @@ mp3 0.6564 PASS | ccd 0.9919 PASS | ccsd 0.9348 PASS | adc2 1.0000 tie.
 C-013 closed (its "missing class" was C-016). Remaining goal item:
 adc2's exact tie (C-014) — the space optimum == gristmill there, so a
 class gristmill lacks is required.
+
+## C-014 adc2 tie analysis (negative results, milestone critic pass)
+
+adc2 is provably at its space optimum == gristmill (ILP exact, gap 0,
+identical cost histograms). adc2 has NO declared symmetries. Measured
+candidate classes for a strict beat, all zero/negative value on adc2:
+- multi-operand fused steps (C-017): uniformly worse (13.4G vs 648M) —
+  anti-class.
+- value-level coincidences between emitted intermediates: none.
+- C-009 unsummed-precursor: no chosen block recurs with a different keep
+  set; the T1.T4 3-axis contractions (singles reps 9/10) would need a
+  shared 2-axis precursor of size v^3o^3 (2.1G) >> 2x134M — dead.
+- gristmill's adc2 uses only landed classes (families with sum operands,
+  sum-orbits L13/L18 pair pattern, free permutes).
+
+Critic-pass note: ccsd priced is 8.2K BELOW the ILP objective (the
+accounting now slightly overcounts — likely cluster-presence edge);
+cosmetic, flagged for the next B-007 follow-up. adc2 remains the only
+goal blocker: mp3 0.6564 | ccd 0.9919 | ccsd 0.9348 | adc2 1.000000.
