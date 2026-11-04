@@ -236,6 +236,11 @@ enum Cmd {
         /// Experimental bounded parenthesize-then-action lookahead (I-005).
         #[arg(long)]
         lookahead: bool,
+        /// Biclique prefilter: model-price only the symbolic-FLOP top-K
+        /// variants per definition. 0 = disabled (price all; F-037: the
+        /// prefilter causally blinds model-priced acceptance).
+        #[arg(long, default_value = "0")]
+        prefilter_k: usize,
         /// Split definitions above this many terms (0 disables splitting).
         #[arg(long, default_value = "20")]
         split_above: usize,
@@ -357,6 +362,7 @@ fn best_kernel_action(
     score: &dyn Fn(&gristmill_rewrites::repr::Computation) -> f64,
     log_sizes: &BTreeMap<gristmill_rewrites::repr::RangeId, f64>,
     dbg: bool,
+    prefilter_k: usize,
 ) -> Option<(f64, gristmill_rewrites::action::Action, String)> {
     use gristmill_rewrites::action::{self, ActionQuery, ActionSpace};
     use gristmill_rewrites::transition;
@@ -427,7 +433,9 @@ fn best_kernel_action(
                 }
             }
             priced.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-            for (_, ci, act) in priced.into_iter().take(8) {
+            // F-037: prefilter disabled by default — price ALL variants.
+            let take = if prefilter_k == 0 { priced.len() } else { prefilter_k };
+            for (_, ci, act) in priced.into_iter().take(take) {
                 if let Ok(s2) = transition::apply(state, act.clone()) {
                     let c = score(s2.computation());
                     let better = match &best {
@@ -1073,6 +1081,7 @@ let t0 = std::time::Instant::now();
             score: score_mode,
             engine,
             lookahead,
+            prefilter_k,
             split_above,
             baseline,
         } => {
@@ -1231,7 +1240,9 @@ let t0 = std::time::Instant::now();
                             }
                         }
                         priced.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-                        for (_, ci, act) in priced.into_iter().take(8) {
+                        // F-037: prefilter disabled by default (see above).
+                        let take = if prefilter_k == 0 { priced.len() } else { prefilter_k };
+                        for (_, ci, act) in priced.into_iter().take(take) {
                             if let Ok(s2) = transition::apply(&state, act.clone()) {
                                 let c = score(s2.computation());
                                 let better = match &best {
@@ -1362,7 +1373,7 @@ let t0 = std::time::Instant::now();
                     for (_, first, first_desc) in firsts.into_iter().take(4) {
                         if let Ok(s1) = transition::apply(&state, first.clone()) {
                             if let Some((c, second, second_desc)) =
-                                best_kernel_action(&s1, &score, &log_sizes, dbg)
+                                best_kernel_action(&s1, &score, &log_sizes, dbg, prefilter_k)
                             {
                                 let better = match &best {
                                     None => true,
