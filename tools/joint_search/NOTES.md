@@ -277,3 +277,22 @@ space-completeness clause these residuals are missing structural classes
 
 Verified scoreboard (trials/20261104-192133.jsonl): mp3 0.6566 PASS |
 ccd 1.0161 | ccsd 1.1031 | adc2 1.0000 (tie).
+
+## C-015: canonicalization must mine orbits in canonical space (milestone)
+
+The ccd +1.6% residual was NOT a missing node class — it was a
+canonicalization defect: canon_full mined each factor's symmetry orbit in
+ORIGINAL label space (lex order on arbitrary label ids), so equivalent
+subterms with different label ids got different sigs and sharing was
+missed (ccd formed the same T2.T1 rank-2 intermediate twice; one 134M
+step had no gristmill counterpart). Fix: exact joint orbit min, made
+fast by two observations: (1) the factor-permutation loop in
+_canon_sig_core was dead work (the body is a sorted multiset); (2) order
+statistics are per-element monotone, so for a fixed label renaming the
+per-factor orbit-min in canonical space IS the exact joint orbit-min.
+25-30x faster than the naive joint enumeration (mp3_sym 17.1s -> 0.59s;
+budget gate restored).
+
+Verified scoreboard (trials/20261104-194244.jsonl): mp3 0.6564 PASS |
+ccd 0.99994 PASS (strict) | adc2 1.000000 (tie, C-014) | ccsd 1.0887
+(C-013 residual 1.87G, under analysis).

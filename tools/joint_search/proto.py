@@ -185,6 +185,26 @@ def dp_tree(factors, out_labels, dom, ext):
 
 # ------------------------------------------------- canonical subterm forms
 
+def sym_orbit(tid, labels, syms):
+    """The full signed orbit of a factor's label tuple under the tensor's
+    declared signed permutation symmetries: list of (tuple, sign)."""
+    gens = syms.get(str(tid), [])
+    if not gens:
+        return [(tuple(labels), 1)]
+    orbit = {(tuple(labels), 1)}
+    frontier = [(tuple(labels), 1)]
+    while frontier:
+        cur, sgn = frontier.pop()
+        for g in gens:
+            perm, s = g["permutation"], g["sign"]
+            nxt = tuple(cur[perm[i]] for i in range(len(cur)))
+            ns = sgn * s
+            if (nxt, ns) not in orbit:
+                orbit.add((nxt, ns))
+                frontier.append((nxt, ns))
+    return sorted(orbit)
+
+
 def sym_orbit_min(tid, labels, syms):
     """Reduce a factor's label tuple modulo the tensor's declared signed
     permutation symmetries: return (min label tuple over the orbit, sign of
@@ -215,16 +235,53 @@ def sym_orbit_min(tid, labels, syms):
 def canon_full(factors, dom, free, syms=None):
     """Returns (sig, ren, sign): canonical isomorphism signature, label
     renaming (original -> canonical id), and the product of per-factor
-    orbit signs (instance = sign x canonical, as functions)."""
-    sign = 1
+    orbit signs (instance = sign x canonical, as functions).
+
+    The min is over label bijections x per-factor signed symmetry orbits
+    (C-015: mining in the original label space first is NOT canonical).
+    Exact and fast: the body is a SORTED multiset, and order statistics
+    are monotone per element, so for a fixed renaming the per-factor
+    orbit-min in canonical space is the exact joint orbit-min. (Factor
+    order is irrelevant to the sorted body; the old factor-permutation
+    loop was dead work.) Ties with opposite signs imply a signed
+    automorphism, i.e. a zero network, so either choice is sound."""
     if SYMS:
-        red = [sym_orbit_min(tid, ls, SYMS) for tid, ls in factors]
-        factors = [(tid, t) for (tid, _), (t, _) in
-                   zip(factors, red)]
-        for _, (_, s) in zip(factors, red):
-            sign *= s
-    sig, ren = _canon_sig_core(factors, dom, free)
-    return sig, ren, sign
+        orbits = [sym_orbit(tid, ls, SYMS) for tid, ls in factors]
+    else:
+        orbits = [[(tuple(ls), 1)] for _, ls in factors]
+    labs = sorted({l for _, ls in factors for l in ls})
+    by_attr = defaultdict(list)
+    for l in labs:
+        by_attr[(dom[l], l in free)].append(l)
+    groups = sorted(by_attr.items())          # [((dom,free), [labels])]
+    per_group = [list(permutations(ls)) for _, ls in groups]
+    attrs = tuple(a for a, ls in groups for _ in ls)
+
+    best = None
+    bestren = None
+    bestsign = 1
+    for combo in _product(per_group):
+        ren = {}
+        i = 0
+        for labels_in_group in combo:
+            for l in labels_in_group:
+                ren[l] = i
+                i += 1
+        body_items = []
+        sign = 1
+        for (tid, _), orb in zip(factors, orbits):
+            bt = None
+            bs = 1
+            for tup, s in orb:
+                rt = tuple(ren[l] for l in tup)
+                if bt is None or rt < bt:
+                    bt, bs = rt, s
+            body_items.append((tid, bt))
+            sign *= bs
+        sig = (attrs, tuple(sorted(body_items)))
+        if best is None or sig < best:
+            best, bestren, bestsign = sig, ren, sign
+    return best, bestren, bestsign
 
 
 def canon_sig(factors, dom, free, want_map=False, syms=None):
