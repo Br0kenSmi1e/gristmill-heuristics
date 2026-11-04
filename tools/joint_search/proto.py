@@ -497,6 +497,28 @@ def sum_group_candidates(terms, term_entries):
     return {key: ctx for key, ctx in groups.items() if len(ctx) >= 2}
 
 
+def solve_problem(problem, ext, time_limit=300, sums=True, group=True):
+    """One joint ILP over ALL outputs: cross-output sharing via a shared
+    universe; term permutation orbits collapsed (representative solved once,
+    members ride as free permutes). Returns (obj, stats)."""
+    all_terms = []
+    owner = []
+    for ov in problem["reference"]["outputs"]:
+        terms, r = parse_terms(problem, ov)
+        for t in terms:
+            t["out_rank"] = r
+        if group:
+            groups, perms = term_groups(terms)
+            reps = sorted(m[0] for _, m in groups)
+            nmemb = {m[0]: len(m) for _, m in groups}
+            for t in reps:
+                terms[t]["nmemb"] = nmemb[t]
+            terms = [terms[t] for t in reps]
+        all_terms.extend(terms)
+        owner.extend([ov] * len(terms))
+    return solve_global(all_terms, ext, time_limit, sums)
+
+
 def solve_global(terms, ext, time_limit=300, sums=True):
     """Exact multi-level sharing ILP for one definition, plus bounded
     sum-intermediate candidates (factor-out groups over rest families).
@@ -595,22 +617,24 @@ def solve_global(terms, ext, time_limit=300, sums=True):
             atom_sets = [set(ls) for _, ls in rest]
             rchoices[(gamma, tt)] = cover_choices(atom_sets, rblocks, keep,
                                                   term["dom"], ext)
-        # S add cost: one add per member beyond the first
+        # S add cost: one add per summed member (incl. perm-members)
+        term0 = terms[ctx[0][0]]
         p_add = 1
         for cid in cf_rest:
             p_add *= ext[cdom[cid]]
-        for p in range(terms[0]["rank"]):
+        for p in range(term0["rank"]):
             if p not in out_g:
-                p_add *= ext[terms[0]["dom"][p]]
-        add_sigma = p_add
+                p_add *= ext[term0["dom"][p]]
+        n_memb = sum(terms[tt].get("nmemb", 1) for tt, _ in ctx)
+        add_total = max(0, n_memb - 1) * p_add
         # combine cost: labels = cfree u out_rest
         pcomb = 1
         for cid in cfree:
             pcomb *= ext[cdom[cid]]
-        for p in range(terms[0]["rank"]):
+        for p in range(term0["rank"]):
             if p not in out_g:
-                pcomb *= ext[terms[0]["dom"][p]]
-        comb_cost[gamma] = (2 if cf_rest else 1) * pcomb
+                pcomb *= ext[term0["dom"][p]]
+        comb_cost[gamma] = (2 if cf_rest else 1) * pcomb + add_total
 
     # ---- ILP
     x_idx = {s: i for i, s in enumerate(cand)}
@@ -1158,17 +1182,12 @@ def main():
             global SYMS
             SYMS = problem["symmetries"]
         t_start = time_mod.time()
-        for ov in problem["reference"]["outputs"]:
-            terms, r = parse_terms(problem, ov)
-            naive = naive_cost(terms, sizes)
-            out = solve_global(terms, sizes)
-            obj, stats = out
-            print(f"output {ov}: {len(terms)} terms | naive {naive} | "
-                  f"global-ILP {int(obj)} ({naive/obj:.3f}x) | "
-                  f"U={stats['U']} cand={stats['candidates']} "
-                  f"vars={stats['vars']} cons={stats['constraints']} "
-                  f"build={stats['build_s']:.1f}s status={stats['status']}")
-        print(f"total wall: {time_mod.time()-t_start:.1f}s")
+        obj, stats = solve_problem(problem, sizes)
+        print(f"{prob_path}: joint global-ILP {int(obj)} "
+              f"(log10 {np.log10(obj):.6f}) | "
+              f"vars={stats['vars']} cons={stats['constraints']} "
+              f"build={stats['build_s']:.1f}s status={stats['status']} | "
+              f"total wall {time_mod.time()-t_start:.1f}s")
 
 
     else:

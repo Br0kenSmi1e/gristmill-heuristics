@@ -120,3 +120,30 @@ structure was genuine, not a sign artifact. Sign-correct sym emission still
 owed.
 
 Complexity: max 1872 vars / 2375 cons / 0.5 s build at 63 terms.
+
+## Global arm v5: joint cross-output solve + term permutation orbits
+
+The user's argument verified empirically: a global optimizer over a complete
+space must not sit above a greedy loop; each residual gap was a missing node
+class. Final two classes added: term-permutation orbits (evaluate one member,
+permute free — gristmill's adc2/ccd pair structure) and cross-output sharing
+(one ILP over all definitions; gristmill shares ~80M between CCSD outputs).
+
+Joint optima (cost-space, ILP-exact, status=0) vs gristmill:
+- sym ON (relaxation — sign-legal emission owed):
+  mp3 11.28G (0.657x), ccd 14.60G (0.878x), ccsd 16.40G (0.766x),
+  adc2 514.0M (0.748x)
+- sym OFF (fully legal space):
+  mp3 11.28G (0.657x), ccd 20.81G (1.252x), ccsd 22.69G (1.059x),
+  adc2 514.0M (0.748x)
+  (mp3/adc2 have no declared symmetries — identical numbers validate the
+  symmetry layer's consistency.)
+
+Remaining legal-space gap (ccd 1.25x, ccsd 1.06x) = legal antisymmetry
+exploitation, i.e. sign-tracking canonicalization + emission. Gristmill does
+this; we don't yet.
+
+Complexity ceiling so far: 1872 vars / 2375 cons / <1 s. No blowup anywhere.
+
+Open classes (small, named): sums-of-sums; unsummed-precursor sharing;
+lincomb micro-accounting (~1M on mp3-scale numbers).
