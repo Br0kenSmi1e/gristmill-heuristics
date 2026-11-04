@@ -32,32 +32,46 @@ landed classes.
   family-covered reps. The honest adc2 optimum is 687.0M == gristmill.
 - **C-012 sum-orbits (pre-sum shared across a perm orbit)**
   value: adc2 689.09 → 686.99M (== gristmill, exact tie); ccd 2.1M;
-  ccsd ~19M. Mechanism: reps with identical member (perm, coeff-ratio)
-  signatures emit one pre-sum S = sum of rep evals; each orbit element
-  rides S via a free permute. Priced exactly in the ILP via cluster
-  variables w_C <= z_t. Includes identity-member coeff folding.
-  Verified: full battery green (trials/20261104-192133.jsonl).
+  ccsd ~19M. Mechanism: items with identical orbit signatures (groups,
+  then also family results after C-016) emit one pre-sum; each orbit
+  element rides it via a free permute. Priced exactly in the ILP via
+  cluster variables w_C <= item-chosen. Includes identity-member coeff
+  folding. Verified: full battery green.
+- **C-015 canonical-space orbit mining** — canon_full now takes the
+  exact joint orbit min (label bijections × per-factor signed orbits);
+  the old original-space mining was not canonical (mining does not
+  commute with relabeling) and hid sharing (ccd formed duplicate
+  intermediates). Made fast via order-statistic monotonicity (separable
+  per-factor orbit-min per renaming) plus removal of the dead
+  factor-permutation loop. ccd 1.0161 → 0.99994; mp3_sym solve
+  17.1s → 0.59s.
+- **C-016 orbit-consistent families** — a family whose covered reps all
+  share one orbit signature emits one result; the whole perm orbit rides
+  it via free permutes (gristmill's ccsd V67 pattern: 20 terms from one
+  T3-combine + 3 permutes). Family candidates are split into signature
+  classes (one inconsistent rep no longer poisons a family). ccsd
+  1.0887 → 0.9348; ccd → 0.9919. Subsumes/retires C-010 (perm members
+  never enter the S-sum at all) and closes C-013.
 
 ## Open
 
 - **C-008 sums of sums** (sum nodes whose summands include sum nodes).
   Suspected small; unmeasured.
 - **C-009 unsummed-precursor sharing** (form A·B once, use both
-  c-summed and c-kept). Unmeasured; check gristmill candidates for
-  instances before sizing.
-- **C-010 partial-keep families with perm members** — currently only
-  identity members join; the permute-based generalization needs the
-  keep-set bookkeeping done canonically (not position ids).
-- **C-013 honest-optimum residuals (the real gaps, post-B-007)** — with
-  exact pricing the ILP optima sit ABOVE gristmill: ccd 16.895G vs
-  16.626G (+1.6%), ccsd 23.630G vs 21.422G (+10.3%), adc2 == gristmill
-  (tie). By the space-completeness clause these are missing structural
-  classes; the old relaxed numbers (0.878/0.766) were underpriced
-  relaxations and are retracted. Mechanism unknown; next: structural
-  diff of gristmill's ccd/ccsd candidates vs our optima.
-- **C-014 adc2 tie-break** — adc2's honest optimum == gristmill exactly;
-  the goal needs strictly below, so a class gristmill does not exploit
-  is required (C-008/C-009 candidates, or family-level sum-orbits).
+  c-summed and c-kept). Measured on adc2's chosen solution: ZERO
+  instances (no chosen block recurs with a different keep set).
+- **C-014 adc2 tie-break [BLOCKER]** — adc2's ILP-exact optimum is
+  686,989,824 == gristmill to the FLOP (identical cost histograms; the
+  space contains gristmill's program and nothing cheaper). adc2 has no
+  declared symmetries, so no sym lever. Measured anti/zero-value classes
+  on adc2: multi-operand fused steps (uniformly worse: 13.4G vs 648M),
+  value-level coincidences (none), C-009 (none). The goal's strict-beat
+  clause needs a class with positive value on adc2; none named yet.
+  Next hypotheses: sums-of-sums inside rests (C-008 proper), or accept
+  the tie and report to the mainline tournament.
+- **C-017 multi-operand steps [ANTI-CLASS]** — measured: fused n-ary
+  pricing (k-1+contr)·p is uniformly worse than binary DP on this
+  corpus. Do not pursue.
 
 ## Anti-classes (looked, don't pay)
 

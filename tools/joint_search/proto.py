@@ -604,32 +604,6 @@ def orbit_signature(terms, members, perms, tsigns):
     return c_eff, sig
 
 
-def sum_orbit_clusters(terms, groups, perms, tsigns):
-    """C-012: cluster reps whose non-identity member (perm, coeff-ratio)
-    signatures are identical, so one pre-sum serves the whole orbit:
-    (A + B) + pi(A + B) instead of A + pi(A) + B + pi(B).
-    Only groups of the form {rep + non-identity members} are eligible
-    (identity members fold into the rep coeff instead). Returns a list of
-    clusters; each cluster is ([rep local ids], [perms], [ratios]).
-    Disjoint: a rep joins at most one cluster (first signature wins)."""
-    sig_map = {}
-    for _, members in groups:
-        rep = members[0]
-        _c_eff, sig = orbit_signature(terms, members, perms, tsigns)
-        if not sig:
-            continue
-        sig_map.setdefault(sig, []).append(rep)
-    clusters = []
-    used = set()
-    for sig, cl in sig_map.items():
-        cl = [r0 for r0 in cl if r0 not in used]
-        if len(cl) >= 2:
-            clusters.append((cl, [p for p, _ in sig],
-                             [rho for _, rho in sig]))
-            used.update(cl)
-    return clusters
-
-
 def orbit_clusters(items):
     """items: [(key, sig)]. Returns [([keys], sig)]: disjoint clusters of
     size >= 2 sharing one orbit signature (first-signature-wins in item
