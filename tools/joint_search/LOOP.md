@@ -3,7 +3,7 @@
 > **Fresh session?** Read `LOOP.md` (this file), then `BUGS.md` (open work),
 > then `CLASSES.md` (what's been tried, with measured values), then
 > `NOTES.md` (history). Run the battery to see the current state:
-> `/tmp/proto-venv/bin/python tools/joint_search/run_battery.py "<note"`
+> `tools/joint_search/.venv/bin/python tools/joint_search/run_battery.py "<note"`
 > from the worktree root. The first open work item is B-006.
 > The repo this branch lives in is shared with another agent — never edit
 > mainline files; never run timing commands except at milestones.
