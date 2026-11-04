@@ -85,3 +85,21 @@ intermediates (v2 restricts rests to plain DP), sums-of-sums.
 Mechanism notes: group candidates = cofactor families keyed by (cofactor sig,
 canonical rest-carried set); partial keep supported (cofactor may carry out
 labels); singleton cofactors allowed (formation-free).
+
+## Cross-cofactor sum sharing (global arm v3)
+
+Motivated by direct measurement of gristmill's CCSD candidate: 7 sum
+intermediates with 2-4 distinct einsum parents (cross-cofactor reuse).
+Added s_sigma (shared sum, linkage-only) / h_gamma (per-family combine) /
+r_{gamma,t} (per-member rest+add) variables — all linear.
+
+CCSD doubles (63 terms): 22.49G vs gristmill 21.42G => 5.0% residual.
+Trajectory: 35.47 (L1) -> 35.11 (global) -> 25.20 (+sym) -> 23.02 (+families)
+-> 22.49 (+cross-cofactor). Totals: mp3 11.28G (0.657x win), ccd 16.74G
+(1.007x par), ccsd 22.74G (1.061x), adc2 681.8M (0.993x).
+
+Complexity: 1373 vars / 1362 cons / 0.4 s build at 63 terms — no blowup.
+
+Residual gap candidates (unmeasured): rests containing intermediates (rests
+are plain-DP only), sums of sums, term-permutation orbits not yet merged
+into the global arm.
