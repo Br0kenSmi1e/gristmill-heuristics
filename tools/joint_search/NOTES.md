@@ -194,3 +194,27 @@ priced-vs-objective self-check).
 
 Remaining verified-gap lever: sign-aware symmetry exploitation
 (canon_full now returns orbit signs; emission folding not yet wired).
+
+## Sign-aware symmetry exploitation (closing the verified gap)
+
+Sign conventions verified by numpy microtests: factor(instance) =
+orbit-sign x factor(canonical); permutes use output=[pi_inv(p)]. Signs fold
+into LinComb coefficients: whole-term signs for ungrouped terms, per-instance
+signs (cofactor + rest) for family members.
+
+Verified scoreboard, sym ON (oracle @ (3,5), truthmill::verify):
+- mp3: 11.28G, 0.657x gristmill — PASS
+- ccd: 16.90G, 1.017x gristmill — PASS (was 1.43x without sym)
+- adc2: 689.1M, 1.003x — PASS
+- ccsd: FAILS truthmill::verify on the doubles definition.
+
+Minimal failing fixture for the open bug: terms {32,33,37,42} of the CCSD
+doubles definition (extracted via parse_terms; subsets of terms as standalone
+problems reproduce it). Pairs and the 3-term subsets pass; the 4-set fails.
+Mechanism zone: nested shared intermediates under antisymmetry. All
+bisection artifacts in /tmp/sub.json are reproducible via
+tools/joint_search/proto.py.
+
+Synthetic regression fixtures (pass): /tmp/antisym_test.json (perm pair +
+antisymmetry), /tmp/antisym_test2.json (pair + shared subterm),
+/tmp/ccsd_energy.json (3-term scalar).

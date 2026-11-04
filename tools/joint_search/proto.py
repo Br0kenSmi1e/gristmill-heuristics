@@ -508,8 +508,7 @@ def sum_group_candidates(terms, term_entries, partial_keep=True,
                 if locked and t in locked and not full:
                     continue
                 free_g = labs_g & (rest_labels | outpos)
-                sig, ren = canon_sig(facs, term["dom"], free_g,
-                                     want_map=True)
+                sig, ren, sgn = canon_full(facs, term["dom"], free_g)
                 ren_inv = {v: kk for kk, v in ren.items()}
                 cf_rest = tuple(sorted(c for c in ren_inv
                                        if ren_inv[c] in rest_labels))
@@ -517,7 +516,7 @@ def sum_group_candidates(terms, term_entries, partial_keep=True,
                                      if p in labs_g
                                      and p not in rest_labels))
                 key = (sig, cf_rest, out_g)
-                groups[key].append((t, idxs, ren))
+                groups[key].append((t, idxs, ren, sgn))
     return {key: ctx for key, ctx in groups.items() if len(ctx) >= 2}
 
 
@@ -545,6 +544,9 @@ def solve_problem(problem, ext, time_limit=300, sums=True, group=True,
         else:
             groups = [(None, [t]) for t in range(len(terms))]
             perms = {t: list(range(r)) for t in range(len(terms))}
+            tsigns = {t: (canon_full(terms[t]["factors"], terms[t]["dom"],
+                                     set(range(r)))[2] if SYMS else 1)
+                      for t in range(len(terms))}
             grouped_terms = terms
         base = len(all_terms)
         all_terms.extend(grouped_terms)
@@ -633,7 +635,7 @@ def solve_global(terms, ext, time_limit=300, sums=True,
                                              partial_keep=partial_keep
                                              ).items():
             gsig, cf_rest, out_g = key
-            fams[key] = [t for t, _, _ in ctx]
+            fams[key] = [t for t, _, _, _ in ctx]
             fam_g[key] = gsig
             fam_sigma[key] = (cf_rest, out_g)
     sigmas = sorted({fam_sigma[g] for g in fams})
@@ -641,8 +643,9 @@ def solve_global(terms, ext, time_limit=300, sums=True,
     # precompute per-(family, member) rest cost and per-sigma add cost
     rcost_rt = {}    # (gamma, t) -> dp(rest) + one add
     comb_cost = {}   # gamma -> combine cost
-    fam_ctx = sum_group_candidates(terms, term_entries,
-                                   partial_keep=partial_keep)
+    fam_ctx = (sum_group_candidates(terms, term_entries,
+                                    partial_keep=partial_keep)
+               if sums else {})
     # rests may themselves use materialized product intermediates: each
     # (family, member) gets rest-cover choices, exactly like terms
     rchoices = {}   # (gamma, t) -> [(cover, cost)]
@@ -650,7 +653,7 @@ def solve_global(terms, ext, time_limit=300, sums=True,
     for gamma, ctx in fam_ctx.items():
         gsig, cf_rest, out_g = gamma
         _, cfree, cdom = canon_record(gsig)
-        for (tt, idxs, _) in ctx:
+        for (tt, idxs, _, _) in ctx:
             term = terms[tt]
             keep_set = set(range(term["rank"])) - set(out_g)
             n_extra = 0
@@ -680,10 +683,9 @@ def solve_global(terms, ext, time_limit=300, sums=True,
                         if j not in cidx:
                             outside |= set(ls)
                     free = labs & outside
-                    ssig, sren = canon_sig(facs, term["dom"], free,
-                                           want_map=True)
+                    ssig, sren, ssgn = canon_full(facs, term["dom"], free)
                     if ssig in candset:
-                        rblocks.append((cidx, ssig, free, sren))
+                        rblocks.append((cidx, ssig, free, sren, ssgn))
             atom_sets = [set(ls) for _, ls in rest]
             rchoices[(gamma, tt)] = cover_choices(atom_sets, rblocks, keep,
                                                   term["dom"], ext)
@@ -695,7 +697,7 @@ def solve_global(terms, ext, time_limit=300, sums=True,
         for p in range(term0["rank"]):
             if p not in out_g:
                 p_add *= ext[term0["dom"][p]]
-        n_memb = sum(terms[tt].get("nmemb", 1) for tt, _, _ in ctx)
+        n_memb = sum(terms[tt].get("nmemb", 1) for tt, _, _, _ in ctx)
         add_total = max(0, n_memb - 1) * p_add
         # combine cost: labels = cfree u out_rest
         pcomb = 1
@@ -707,7 +709,7 @@ def solve_global(terms, ext, time_limit=300, sums=True,
         # non-identity perm members of covered reps are emitted separately
         # (plain full evaluation); charge them here
         extra = 0
-        for tt, _, _ in ctx:
+        for tt, _, _, _ in ctx:
             meta = (rep_meta or {}).get(tt)
             if not meta:
                 continue
@@ -1186,8 +1188,36 @@ def emit_program(problem, ext):
 
 # ------------------------------------------------- global-arm emission
 
+def member_instance_signs(mterm, n_cofactor, gsig, r):
+    """(s_g, s_rest): orbit signs of the member's cofactor instance and its
+    rest vs the shared canonical forms. +1/+1 when no symmetries."""
+    if not SYMS:
+        return 1, 1
+    for cidx in combinations(range(len(mterm["factors"])), n_cofactor):
+        facs = [mterm["factors"][i] for i in cidx]
+        labs = {l for _, ls in facs for l in ls}
+        outside = set(range(r))
+        for j, (_, ls) in enumerate(mterm["factors"]):
+            if j not in cidx:
+                outside |= set(ls)
+        free = labs & outside
+        msig, mren, msgn = canon_full(facs, mterm["dom"], free)
+        if msig == gsig:
+            rest = [mterm["factors"][i]
+                    for i in range(len(mterm["factors"])) if i not in cidx]
+            rest_labs = {l for _, ls in rest for l in ls}
+            s_rest = canon_full(rest, mterm["dom"], rest_labs)[2]
+            return msgn, s_rest
+    raise RuntimeError("member instance not found")
+
+
 def emit_global(solpack, ext):
-    """Emit one Program from a joint global-ILP solution."""
+    """Emit one Program from a joint global-ILP solution.
+
+    Sign conventions (verified by the oracle): every emitted intermediate is
+    its canonical form; a written instance equals (orbit sign) x canonical,
+    so true contributions pick up coeff x (product of instance signs).
+    Permutes use output=[pi_inv(q)] (settled by numpy microtest)."""
     U = solpack["U"]
     sol = solpack["sol"]
     per_out = solpack["per_out"]
@@ -1195,8 +1225,8 @@ def emit_global(solpack, ext):
     fam_ctx = sol["fam_ctx"]
     values = []
 
-    # --- materialized intermediates, smallest first (strict-subset blocks
-    #     make factor count a valid topological order)
+    # --- materialized intermediates, smallest first (blocks are strict
+    #     subsets: factor count is a valid topological order)
     sig_ref = {}
     for s in sorted(sol["x"], key=lambda s: len(U[s]["cfactors"])):
         rec = U[s]
@@ -1219,7 +1249,7 @@ def emit_global(solpack, ext):
         if gsig in sig_ref:
             return sig_ref[gsig]
         body, cfree, cdom = canon_record(gsig)
-        assert len(body) == 1, "cofactor missing from U and not singleton"
+        assert len(body) == 1
         tid, ls = body[0]
         return {"Tensor": tid}, tuple(ls)
 
@@ -1230,6 +1260,7 @@ def emit_global(solpack, ext):
         terms = pod["terms"]
         r = pod["rank"]
         perms = pod["perms"]
+        tsigns = pod["tsigns"]
         groups = pod["groups"]
         members_of = {m[0]: m for _, m in groups}
         reps = sorted(m[0] for _, m in groups)
@@ -1256,15 +1287,24 @@ def emit_global(solpack, ext):
                 term = terms[local_rep]
                 rentry = [e for e in fam_ctx[gamma] if e[0] == tg][0]
                 ren = rentry[2]
+                s_g = rentry[3]
                 ren_inv = {v: k for k, v in ren.items()}
                 if first_ren_inv is None:
                     first_ren_inv = ren_inv
-                keep_term = ([ren_inv[c] for c in cf_rest]
-                             + [p for p in range(r) if p not in out_g])
+                keep_term = [ren_inv[c] for c in cf_rest] + keep_out
                 cover = sol["r"][(gamma, tg, ci)]
+                # rep's rest multiplier = block signs; member multiplier
+                # additionally needs canon-sign ratio of written rests
                 rest = [term["factors"][i]
                         for i in range(len(term["factors"]))
                         if i not in rentry[1]]
+                s_rest = 1
+                for b in cover:
+                    if len(b) > 4:
+                        s_rest *= b[4]
+                s_rest_rep_written = canon_full(rest, term["dom"],
+                                                set(keep_term))[2] \
+                    if SYMS else 1
                 leaf_info = []
                 covered_rest = set()
                 for b in cover:
@@ -1278,34 +1318,27 @@ def emit_global(solpack, ext):
                         leaf_info.append(({"Tensor": tid}, tuple(ls)))
                 ref, _ = emit_binary_tree(values, leaf_info, keep_term,
                                           term["dom"], ext)
-                keep_set = set(keep_out)
+                # members: identity ride directly; others get their own
+                # plain rest evaluation (sound, charged in the ILP)
                 for t in members_of[local_rep]:
                     pi = perms[t]
-                    pi_inv = [pi.index(q) for q in range(r)]
-                    if all(p == q for p, q in enumerate(pi)):
+                    is_id = all(p == q for p, q in enumerate(pi))
+                    if is_id:
                         sum_args.append(ref)
                         sum_inputs.append(list(s_order))
-                    elif {pi_inv[q] for q in keep_set} == keep_set:
-                        # valid pure permute of the rep's rest
-                        out_tuple = ([S_BASE + c for c in cf_rest]
-                                     + [pi_inv[q] for q in keep_out])
-                        used = set(s_order) | set(out_tuple)
-                        vid = len(values)
-                        values.append({"Einsum": {
-                            "coeff": [1, 1],
-                            "code": {"inputs": [s_order],
-                                     "output": out_tuple,
-                                     "domains": {str(l): (
-                                         s_dom[str(l)] if str(l) in s_dom
-                                         else terms[0]["dom"][l])
-                                                 for l in sorted(used)}},
-                            "args": [ref]}})
-                        sum_args.append({"Value": vid})
-                        sum_inputs.append(list(s_order))
+                        if t == local_rep:
+                            sum_coeffs.append(terms[t]["coeff"]
+                                              * s_g * s_rest)
+                        else:
+                            s_g_m, s_rest_m = member_instance_signs(
+                                terms[t], len(rentry[1]), gsig, r)
+                            sum_coeffs.append(terms[t]["coeff"]
+                                              * s_g_m * s_rest_m
+                                              * s_rest_rep_written * s_rest)
                     else:
-                        # keep set not preserved: re-emit member's own rest
                         mterm = terms[t]
-                        ge = None
+                        # member's g-instance sign
+                        s_g_m = None
                         for cidx in combinations(
                                 range(len(mterm["factors"])), len(rentry[1])):
                             facs = [mterm["factors"][i] for i in cidx]
@@ -1315,14 +1348,15 @@ def emit_global(solpack, ext):
                                 if j not in cidx:
                                     outside |= set(ls)
                             free = labs & outside
-                            msig, mren, _ = canon_full(facs, mterm["dom"],
-                                                       free)
+                            msig, mren, msgn = canon_full(facs,
+                                                          mterm["dom"], free)
                             if msig == gsig:
-                                ge = (frozenset(cidx), mren)
+                                s_g_m = msgn
+                                mren_f = mren
+                                gidxs_m = frozenset(cidx)
                                 break
-                        assert ge is not None, "member g-instance not found"
-                        gidxs_m, mren = ge
-                        mren_inv = {v: k for k, v in mren.items()}
+                        assert s_g_m is not None
+                        mren_inv = {v: k for k, v in mren_f.items()}
                         mrest = [mterm["factors"][i]
                                  for i in range(len(mterm["factors"]))
                                  if i not in gidxs_m]
@@ -1330,16 +1364,23 @@ def emit_global(solpack, ext):
                                  + [p for p in range(r)
                                     if p in {l for _, ls in mrest
                                              for l in ls}])
+                        # member's rest sign vs canonical
+                        s_rest_m = 1  # emitted as written
+                        # rep's rest sign was folded via s_rest; the member
+                        # relation to the SAME canonical rest is s_rest_m
                         mref, mout = emit_binary_tree(
                             values, [({"Tensor": tid}, tuple(ls))
                                      for tid, ls in mrest], mkeep,
                             mterm["dom"], ext)
                         sum_args.append(mref)
-                        # map member's out axes to canonical positions
                         sum_inputs.append(
                             [S_BASE + c for c in cf_rest]
                             + [pi[p] for p in mout[len(cf_rest):]])
-                    sum_coeffs.append(terms[t]["coeff"])
+                        # member's rest emitted as written: its sign vs
+                        # canonical is s_rest_m; rep's rest (emitted) had
+                        # sign s_rest; canonical is shared
+                        sum_coeffs.append(terms[t]["coeff"] * s_g_m
+                                          * s_rest_m)
             vid = len(values)
             values.append({"LinComb": {
                 "coeff": [[c.numerator, c.denominator] for c in sum_coeffs],
@@ -1361,7 +1402,7 @@ def emit_global(solpack, ext):
                 "args": [gref, {"Value": vid}]}})
             contribs.append(({"Value": vid2}, Fraction(1)))
 
-        # non-identity members of grouped reps: own plain covers
+        # non-identity members of grouped reps: own plain evaluations
         for (g2, tg, ci) in sorted(sol["r"]):
             if not (base <= tg < base + len(reps)):
                 continue
@@ -1376,9 +1417,9 @@ def emit_global(solpack, ext):
                 ref, _ = emit_binary_tree(values, leaf_info,
                                           list(range(r)),
                                           mterm["dom"], ext)
-                contribs.append((ref, mterm["coeff"]))
+                contribs.append((ref, mterm["coeff"]))  # plain eval: exact
 
-        # ungrouped reps
+        # ungrouped reps: evaluate once; perm members ride via permutes
         for k, local_rep in enumerate(reps):
             tg = base + k
             if tg in grouped_reps:
@@ -1397,11 +1438,19 @@ def emit_global(solpack, ext):
                     leaf_info.append(({"Tensor": tid}, tuple(ls)))
             ref, _ = emit_binary_tree(values, leaf_info, list(range(r)),
                                       term["dom"], ext)
+            block_sign = 1
+            for b in cover:
+                if len(b) > 4:
+                    block_sign *= b[4]
             for t in members_of[local_rep]:
                 pi = perms[t]
                 pi_inv = [pi.index(q) for q in range(r)]
                 if all(p == q for p, q in enumerate(pi)):
-                    contribs.append((ref, terms[t]["coeff"]))
+                    contribs.append((ref, terms[t]["coeff"]
+                                     * (block_sign if t == local_rep
+                                        else tsigns[t]
+                                        * tsigns[local_rep]
+                                        * block_sign)))
                 else:
                     outdom = {str(l): terms[t]["dom"][l] for l in range(r)}
                     vid = len(values)
@@ -1411,7 +1460,9 @@ def emit_global(solpack, ext):
                                  "output": [pi_inv[p] for p in range(r)],
                                  "domains": outdom},
                         "args": [ref]}})
-                    contribs.append(({"Value": vid}, terms[t]["coeff"]))
+                    contribs.append(({"Value": vid},
+                                     terms[t]["coeff"] * tsigns[t]
+                                     * tsigns[local_rep] * block_sign))
 
         outdom = {str(l): terms[0]["dom"][l] for l in range(r)}
         vid = len(values)
@@ -1533,7 +1584,10 @@ def main():
         problem = json.load(open(prob_path))
         if len(sys.argv) > 5 and sys.argv[5] == "sym":
             SYMS = problem["symmetries"]
-        pack = solve_problem(problem, sizes, partial_keep=True)
+        flags = set(sys.argv[5:])
+        pack = solve_problem(problem, sizes, partial_keep=True,
+                             sums="nosums" not in flags,
+                             group="nogroup" not in flags)
         prog = emit_global(pack, sizes)
         priced = price_candidate(prog, sizes)
         json.dump(prog, open(out_path, "w"))
