@@ -403,7 +403,8 @@ def subset_sigs(cfactors, cdom, cfree):
                 if j not in idxs:
                     outside |= set(ls)
             free = labs & outside
-            yield idxs, canon_sig(facs, cdom, free), free
+            sig, ren = canon_sig(facs, cdom, free, want_map=True)
+            yield idxs, sig, free, ren
 
 
 def build_universe(terms):
@@ -442,7 +443,7 @@ def build_universe(terms):
             continue
         cfactors, cfree, cdom = canon_record(sig)
         U[sig] = {"cfactors": cfactors, "cfree": cfree, "cdom": cdom}
-        for _, subsig, _ in subset_sigs(cfactors, cdom, cfree):
+        for _, subsig, _, _ in subset_sigs(cfactors, cdom, cfree):
             if subsig not in U:
                 work.append(subsig)
     return U, term_blocks, term_entries
@@ -465,7 +466,7 @@ def cover_choices(atom_sets, block_list, out_labels, dom, ext):
     return choices
 
 
-def sum_group_candidates(terms, term_entries):
+def sum_group_candidates(terms, term_entries, partial_keep=True):
     """Group candidates = cofactor families: (canonical cofactor sig,
     canonical rest-carry split). The cofactor may carry some output labels
     (partial keep); the S space is (canonical g-free labels present in
@@ -483,6 +484,10 @@ def sum_group_candidates(terms, term_entries):
                         if i not in idxs]
                 labs_g = {l for _, ls in facs for l in ls}
                 rest_labels = {l for _, ls in rest for l in ls}
+                if not partial_keep:
+                    if not ((labs_g & (rest_labels | outpos)) <= rest_labels
+                            and outpos <= rest_labels):
+                        continue
                 free_g = labs_g & (rest_labels | outpos)
                 sig, ren = canon_sig(facs, term["dom"], free_g,
                                      want_map=True)
@@ -493,16 +498,18 @@ def sum_group_candidates(terms, term_entries):
                                      if p in labs_g
                                      and p not in rest_labels))
                 key = (sig, cf_rest, out_g)
-                groups[key].append((t, idxs))
+                groups[key].append((t, idxs, ren))
     return {key: ctx for key, ctx in groups.items() if len(ctx) >= 2}
 
 
-def solve_problem(problem, ext, time_limit=300, sums=True, group=True):
+def solve_problem(problem, ext, time_limit=300, sums=True, group=True,
+                  partial_keep=True):
     """One joint ILP over ALL outputs: cross-output sharing via a shared
     universe; term permutation orbits collapsed (representative solved once,
     members ride as free permutes). Returns (obj, stats)."""
     all_terms = []
     owner = []
+    per_out = []
     for ov in problem["reference"]["outputs"]:
         terms, r = parse_terms(problem, ov)
         for t in terms:
@@ -513,13 +520,29 @@ def solve_problem(problem, ext, time_limit=300, sums=True, group=True):
             nmemb = {m[0]: len(m) for _, m in groups}
             for t in reps:
                 terms[t]["nmemb"] = nmemb[t]
-            terms = [terms[t] for t in reps]
-        all_terms.extend(terms)
-        owner.extend([ov] * len(terms))
-    return solve_global(all_terms, ext, time_limit, sums)
+            grouped_terms = [terms[t] for t in reps]
+        else:
+            groups = [(None, [t]) for t in range(len(terms))]
+            perms = {t: list(range(r)) for t in range(len(terms))}
+            grouped_terms = terms
+        base = len(all_terms)
+        all_terms.extend(grouped_terms)
+        owner.extend([ov] * len(grouped_terms))
+        per_out.append({"ov": ov, "terms": terms, "rank": r,
+                        "groups": groups, "perms": perms,
+                        "rep_base": base})
+    res = solve_global(all_terms, ext, time_limit, sums,
+                       partial_keep=partial_keep)
+    if res[0] is None:
+        return None
+    (obj, sol, U, stats), _ = res
+    return {"obj": obj, "sol": sol, "U": U, "all_terms": all_terms,
+            "per_out": per_out, "stats": stats}\
+        if True else None
 
 
-def solve_global(terms, ext, time_limit=300, sums=True):
+def solve_global(terms, ext, time_limit=300, sums=True,
+                 partial_keep=True):
     """Exact multi-level sharing ILP for one definition, plus bounded
     sum-intermediate candidates (factor-out groups over rest families).
     Returns (obj, stats) — cost only, no emission."""
@@ -535,11 +558,12 @@ def solve_global(terms, ext, time_limit=300, sums=True):
     sub_of = {}
     for sig, rec in U.items():
         subs = []
-        for idxs, subsig, subfree in subset_sigs(rec["cfactors"],
-                                                 rec["cdom"], rec["cfree"]):
-            subs.append((idxs, subsig, subfree))
+        for idxs, subsig, subfree, subren in subset_sigs(rec["cfactors"],
+                                                         rec["cdom"],
+                                                         rec["cfree"]):
+            subs.append((idxs, subsig, subfree, subren))
         sub_of[sig] = subs
-        for _, ss, _ in subs:
+        for _, ss, _, _ in subs:
             nctx[ss] += 1
 
     cand = [s for s in U if nctx[s] >= 2]
@@ -549,8 +573,9 @@ def solve_global(terms, ext, time_limit=300, sums=True):
     forms = {}   # sig -> [(cover, cost)]  cover = tuple of (idxs, subsig)
     for s in cand:
         rec = U[s]
-        blocks = [(idxs, ss, free_in_m, None) for idxs, ss, free_in_m in
-                  sub_of[s] if ss in candset]
+        blocks = [(idxs, ss, free_in_m, ren_in_m) for
+                  idxs, ss, free_in_m, ren_in_m in sub_of[s]
+                  if ss in candset]
         atom_sets = [set(ls) for _, ls in rec["cfactors"]]
         forms[s] = cover_choices(atom_sets, blocks, rec["cfree"],
                                  rec["cdom"], ext)
@@ -573,9 +598,11 @@ def solve_global(terms, ext, time_limit=300, sums=True):
     fam_g = {}       # gamma -> gsig
     fam_sigma = {}   # gamma -> sigma
     if sums:
-        for key, ctx in sum_group_candidates(terms, term_entries).items():
+        for key, ctx in sum_group_candidates(terms, term_entries,
+                                             partial_keep=partial_keep
+                                             ).items():
             gsig, cf_rest, out_g = key
-            fams[key] = [t for t, _ in ctx]
+            fams[key] = [t for t, _, _ in ctx]
             fam_g[key] = gsig
             fam_sigma[key] = (cf_rest, out_g)
     sigmas = sorted({fam_sigma[g] for g in fams})
@@ -583,14 +610,15 @@ def solve_global(terms, ext, time_limit=300, sums=True):
     # precompute per-(family, member) rest cost and per-sigma add cost
     rcost_rt = {}    # (gamma, t) -> dp(rest) + one add
     comb_cost = {}   # gamma -> combine cost
-    fam_ctx = sum_group_candidates(terms, term_entries)
+    fam_ctx = sum_group_candidates(terms, term_entries,
+                                   partial_keep=partial_keep)
     # rests may themselves use materialized product intermediates: each
     # (family, member) gets rest-cover choices, exactly like terms
     rchoices = {}   # (gamma, t) -> [(cover, cost)]
     for gamma, ctx in fam_ctx.items():
         gsig, cf_rest, out_g = gamma
         _, cfree, cdom = canon_record(gsig)
-        for (tt, idxs) in ctx:
+        for (tt, idxs, _) in ctx:
             term = terms[tt]
             k = len(term["factors"])
             rest = [term["factors"][i] for i in range(k) if i not in idxs]
@@ -611,9 +639,10 @@ def solve_global(terms, ext, time_limit=300, sums=True):
                         if j not in cidx:
                             outside |= set(ls)
                     free = labs & outside
-                    ssig = canon_sig(facs, term["dom"], free)
+                    ssig, sren = canon_sig(facs, term["dom"], free,
+                                           want_map=True)
                     if ssig in candset:
-                        rblocks.append((cidx, ssig, free, None))
+                        rblocks.append((cidx, ssig, free, sren))
             atom_sets = [set(ls) for _, ls in rest]
             rchoices[(gamma, tt)] = cover_choices(atom_sets, rblocks, keep,
                                                   term["dom"], ext)
@@ -625,7 +654,7 @@ def solve_global(terms, ext, time_limit=300, sums=True):
         for p in range(term0["rank"]):
             if p not in out_g:
                 p_add *= ext[term0["dom"][p]]
-        n_memb = sum(terms[tt].get("nmemb", 1) for tt, _ in ctx)
+        n_memb = sum(terms[tt].get("nmemb", 1) for tt, _, _ in ctx)
         add_total = max(0, n_memb - 1) * p_add
         # combine cost: labels = cfree u out_rest
         pcomb = 1
@@ -737,7 +766,19 @@ def solve_global(terms, ext, time_limit=300, sums=True):
              "mip_gap": getattr(res, "mip_gap", None)}
     if res.x is None:
         return None, stats
-    return res.fun, stats
+    xs = res.x
+    sol = {
+        "fam_ctx": fam_ctx,
+        "x": {s for i, s in enumerate(cand) if xs[i] > 0.5},
+        "y": {ys: cover for j, (ys, cover, _) in enumerate(yvars)
+              if xs[nx + j] > 0.5},
+        "z": {t: cover for j, (t, cover, _) in enumerate(zvars)
+              if xs[nx + ny + j] > 0.5},
+        "h": {hvars[j] for j in range(nh) if xs[h0 + j] > 0.5},
+        "r": {rvars[j]: r_cov[(rvars[j][0], rvars[j][1])][rvars[j][2]][0]
+              for j in range(nr) if xs[r0 + j] > 0.5},
+    }
+    return (res.fun, sol, U, stats), stats
 
 
 # ------------------------------------------------------------------ the ILP
@@ -1087,6 +1128,187 @@ def emit_program(problem, ext):
     return {"values": values, "outputs": outputs}, report
 
 
+# ------------------------------------------------- global-arm emission
+
+def emit_global(solpack, ext):
+    """Emit one Program from a joint global-ILP solution."""
+    U = solpack["U"]
+    sol = solpack["sol"]
+    per_out = solpack["per_out"]
+    all_terms = solpack["all_terms"]
+    fam_ctx = sol["fam_ctx"]
+    values = []
+
+    # --- materialized intermediates, smallest first (strict-subset blocks
+    #     make factor count a valid topological order)
+    sig_ref = {}
+    for s in sorted(sol["x"], key=lambda s: len(U[s]["cfactors"])):
+        rec = U[s]
+        cover = sol["y"][s]
+        used = frozenset().union(*(b[0] for b in cover)) if cover \
+            else frozenset()
+        leaf_info = []
+        for (idxs, subsig, _free, ren) in cover:
+            bref, border = sig_ref[subsig]
+            ren_inv = {v: k for k, v in ren.items()}
+            leaf_info.append((bref, tuple(ren_inv[c] for c in border)))
+        for i, (tid, ls) in enumerate(rec["cfactors"]):
+            if i not in used:
+                leaf_info.append(({"Tensor": tid}, tuple(ls)))
+        ref, out = emit_binary_tree(values, leaf_info, list(rec["cfree"]),
+                                    rec["cdom"], ext)
+        sig_ref[s] = (ref, out)
+
+    def cofactor_ref(gsig):
+        if gsig in sig_ref:
+            return sig_ref[gsig]
+        body, cfree, cdom = canon_record(gsig)
+        assert len(body) == 1, "cofactor missing from U and not singleton"
+        tid, ls = body[0]
+        return {"Tensor": tid}, tuple(ls)
+
+    grouped_reps = {t for (_, t, _) in sol["r"]}
+
+    outputs = []
+    for pod in per_out:
+        terms = pod["terms"]
+        r = pod["rank"]
+        perms = pod["perms"]
+        groups = pod["groups"]
+        members_of = {m[0]: m for _, m in groups}
+        reps = sorted(m[0] for _, m in groups)
+        base = pod["rep_base"]
+
+        contribs = []
+
+        for gamma in sorted(sol["h"]):
+            members = [(t, ci) for (g2, t, ci) in sol["r"]
+                       if g2 == gamma and base <= t < base + len(reps)]
+            if not members:
+                continue
+            gsig, cf_rest, out_g = gamma
+            _, g_cfree, g_cdom = canon_record(gsig)
+            keep_out = [p for p in range(r) if p not in out_g]
+            s_order = [S_BASE + c for c in cf_rest] + keep_out
+            s_dom = {str(S_BASE + c): g_cdom[c] for c in cf_rest}
+            for l in keep_out:
+                s_dom[str(l)] = terms[0]["dom"][l]
+            sum_args, sum_coeffs = [], []
+            first_ren_inv = None
+            for (tg, ci) in members:
+                local_rep = reps[tg - base]
+                term = terms[local_rep]
+                rentry = [e for e in fam_ctx[gamma] if e[0] == tg][0]
+                ren = rentry[2]
+                ren_inv = {v: k for k, v in ren.items()}
+                if first_ren_inv is None:
+                    first_ren_inv = ren_inv
+                keep_term = ([ren_inv[c] for c in cf_rest]
+                             + [p for p in range(r) if p not in out_g])
+                cover = sol["r"][(gamma, tg, ci)]
+                rest = [term["factors"][i]
+                        for i in range(len(term["factors"]))
+                        if i not in rentry[1]]
+                leaf_info = []
+                covered_rest = set()
+                for b in cover:
+                    bref, border = sig_ref[b[1]]
+                    bren_inv = {v: k for k, v in b[3].items()}
+                    leaf_info.append((bref, tuple(bren_inv[c]
+                                                  for c in border)))
+                    covered_rest |= set(b[0])
+                for i, (tid, ls) in enumerate(rest):
+                    if i not in covered_rest:
+                        leaf_info.append(({"Tensor": tid}, tuple(ls)))
+                ref, _ = emit_binary_tree(values, leaf_info, keep_term,
+                                          term["dom"], ext)
+                for t in members_of[local_rep]:
+                    pi = perms[t]
+                    if all(p == q for p, q in enumerate(pi)):
+                        sum_args.append(ref)
+                    else:
+                        out_tuple = ([S_BASE + c for c in cf_rest]
+                                     + [pi[q] for q in keep_out])
+                        used = set(s_order) | set(out_tuple)
+                        vid = len(values)
+                        values.append({"Einsum": {
+                            "coeff": [1, 1],
+                            "code": {"inputs": [s_order],
+                                     "output": out_tuple,
+                                     "domains": {str(l): (
+                                         s_dom[str(l)] if str(l) in s_dom
+                                         else terms[0]["dom"][l])
+                                                 for l in sorted(used)}},
+                            "args": [ref]}})
+                        sum_args.append({"Value": vid})
+                    sum_coeffs.append(terms[t]["coeff"])
+            vid = len(values)
+            values.append({"LinComb": {
+                "coeff": [[c.numerator, c.denominator] for c in sum_coeffs],
+                "code": {"inputs": [s_order] * len(sum_args),
+                         "output": s_order, "domains": dict(s_dom)},
+                "args": sum_args}})
+            gref, gorder = cofactor_ref(gsig)
+            gin = [S_BASE + cid if cid in cf_rest else first_ren_inv[cid]
+                   for cid in gorder]
+            step_dom = dict(s_dom)
+            for l in gin:
+                if l < S_BASE and str(l) not in step_dom:
+                    step_dom[str(l)] = terms[0]["dom"][l]
+            vid2 = len(values)
+            values.append({"Einsum": {
+                "coeff": [1, 1],
+                "code": {"inputs": [gin, s_order], "output": list(range(r)),
+                         "domains": step_dom},
+                "args": [gref, {"Value": vid}]}})
+            contribs.append(({"Value": vid2}, Fraction(1)))
+
+        # ungrouped reps
+        for k, local_rep in enumerate(reps):
+            tg = base + k
+            if tg in grouped_reps:
+                continue
+            term = terms[local_rep]
+            cover = sol["z"][tg]
+            used = frozenset().union(*(b[0] for b in cover)) if cover \
+                else frozenset()
+            leaf_info = []
+            for b in cover:
+                bref, border = sig_ref[b[1]]
+                bren_inv = {v: k for k, v in b[3].items()}
+                leaf_info.append((bref, tuple(bren_inv[c] for c in border)))
+            for i, (tid, ls) in enumerate(term["factors"]):
+                if i not in used:
+                    leaf_info.append(({"Tensor": tid}, tuple(ls)))
+            ref, _ = emit_binary_tree(values, leaf_info, list(range(r)),
+                                      term["dom"], ext)
+            for t in members_of[local_rep]:
+                pi = perms[t]
+                if all(p == q for p, q in enumerate(pi)):
+                    contribs.append((ref, terms[t]["coeff"]))
+                else:
+                    outdom = {str(l): terms[t]["dom"][l] for l in range(r)}
+                    vid = len(values)
+                    values.append({"Einsum": {
+                        "coeff": [1, 1],
+                        "code": {"inputs": [list(range(r))],
+                                 "output": [pi[p] for p in range(r)],
+                                 "domains": outdom},
+                        "args": [ref]}})
+                    contribs.append(({"Value": vid}, terms[t]["coeff"]))
+
+        outdom = {str(l): terms[0]["dom"][l] for l in range(r)}
+        vid = len(values)
+        values.append({"LinComb": {
+            "coeff": [[cf.numerator, cf.denominator] for _, cf in contribs],
+            "code": {"inputs": [list(range(r))] * len(contribs),
+                     "output": list(range(r)),
+                     "domains": outdom},
+            "args": [ref for ref, _ in contribs]}})
+        outputs.append(vid)
+    return {"values": values, "outputs": outputs}
+
+
 # --------------------------------------------------------------- candidate
 
 def price_candidate(cand, ext):
@@ -1155,6 +1377,7 @@ def cmd_analyze(prob_path, sizes):
 
 
 def main():
+    global SYMS
     cmd = sys.argv[1]
     if cmd == "analyze":
         cmd_analyze(sys.argv[2], parse_sizes(sys.argv[3]))
@@ -1179,15 +1402,27 @@ def main():
         prob_path, sizes = sys.argv[2], parse_sizes(sys.argv[3])
         problem = json.load(open(prob_path))
         if len(sys.argv) > 4 and sys.argv[4] == "sym":
-            global SYMS
             SYMS = problem["symmetries"]
         t_start = time_mod.time()
-        obj, stats = solve_problem(problem, sizes)
-        print(f"{prob_path}: joint global-ILP {int(obj)} "
-              f"(log10 {np.log10(obj):.6f}) | "
-              f"vars={stats['vars']} cons={stats['constraints']} "
-              f"build={stats['build_s']:.1f}s status={stats['status']} | "
+        out = solve_problem(problem, sizes)
+        print(f"{prob_path}: joint global-ILP {int(out['obj'])} "
+              f"(log10 {np.log10(out['obj']):.6f}) | "
+              f"vars={out['stats']['vars']} cons={out['stats']['constraints']} "
+              f"build={out['stats']['build_s']:.1f}s "
+              f"status={out['stats']['status']} | "
               f"total wall {time_mod.time()-t_start:.1f}s")
+    elif cmd == "solvegemit":
+        prob_path, sizes, out_path = sys.argv[2], parse_sizes(sys.argv[3]), \
+            sys.argv[4]
+        problem = json.load(open(prob_path))
+        if len(sys.argv) > 5 and sys.argv[5] == "sym":
+            SYMS = problem["symmetries"]
+        pack = solve_problem(problem, sizes, partial_keep=False)
+        prog = emit_global(pack, sizes)
+        priced = price_candidate(prog, sizes)
+        json.dump(prog, open(out_path, "w"))
+        print(f"emitted {len(prog['values'])} steps -> {out_path}")
+        print(f"ILP objective {int(pack['obj'])} | emitted priced {priced}")
 
 
     else:
