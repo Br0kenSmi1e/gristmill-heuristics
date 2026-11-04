@@ -212,15 +212,29 @@ def sym_orbit_min(tid, labels, syms):
     return best, bestsign
 
 
-def canon_sig(factors, dom, free, want_map=False, syms=None):
-    """Canonical isomorphism signature of a subterm: invariant under factor
-    permutation and label bijection, with (domain, free/summed) attributes
-    attached per label. If SYMS (tensor_id -> generator list) is set,
-    factors are first reduced modulo their declared symmetries (sign ignored
-    in the signature; emission must track it separately)."""
+def canon_full(factors, dom, free, syms=None):
+    """Returns (sig, ren, sign): canonical isomorphism signature, label
+    renaming (original -> canonical id), and the product of per-factor
+    orbit signs (instance = sign x canonical, as functions)."""
+    sign = 1
     if SYMS:
-        factors = [(tid, sym_orbit_min(tid, ls, SYMS)[0])
-                   for tid, ls in factors]
+        red = [sym_orbit_min(tid, ls, SYMS) for tid, ls in factors]
+        factors = [(tid, t) for (tid, _), (t, _) in
+                   zip(factors, red)]
+        for _, (_, s) in zip(factors, red):
+            sign *= s
+    sig, ren = _canon_sig_core(factors, dom, free)
+    return sig, ren, sign
+
+
+def canon_sig(factors, dom, free, want_map=False, syms=None):
+    out = canon_full(factors, dom, free)
+    if want_map:
+        return out[0], out[1]
+    return out[0]
+
+
+def _canon_sig_core(factors, dom, free):
     labs = sorted({l for _, ls in factors for l in ls})
     by_attr = defaultdict(list)
     for l in labs:
@@ -250,9 +264,7 @@ def canon_sig(factors, dom, free, want_map=False, syms=None):
             sig = (attrs, body)
             if best is None or sig < best:
                 best, bestren = sig, ren
-    if want_map:
-        return best, bestren
-    return best
+    return best, bestren
 
 
 def _product(lists):
@@ -298,11 +310,12 @@ def term_groups(terms):
     corresponding to member t's output position p."""
     groups = {}
     rens = {}
+    signs = {}
     for t, term in enumerate(terms):
         free = set(range(term["rank"]))
-        sig, ren = canon_sig(term["factors"], term["dom"], free,
-                             want_map=True)
+        sig, ren, sgn = canon_full(term["factors"], term["dom"], free)
         rens[t] = ren
+        signs[t] = sgn
         groups.setdefault(sig, []).append(t)
     perms = {}
     for sig, members in groups.items():
@@ -311,7 +324,7 @@ def term_groups(terms):
         for t in members:
             r = terms[t]["rank"]
             perms[t] = [ren_rep_inv[rens[t][p]] for p in range(r)]
-    return [(sig, members) for sig, members in groups.items()], perms
+    return [(sig, members) for sig, members in groups.items()], perms, signs
 
 
 def shared_candidates(terms):
@@ -430,9 +443,9 @@ def build_universe(terms):
                     if j not in idxs:
                         outside |= set(ls)
                 free = labs & outside
-                sig, ren = canon_sig(facs, term["dom"], free, want_map=True)
+                sig, ren, sgn = canon_full(facs, term["dom"], free)
                 blocks.append((idxs, sig))
-                entries.append((idxs, sig, free, ren))
+                entries.append((idxs, sig, free, ren, sgn))
                 if sig not in U:
                     work.append(sig)
         term_blocks.append(blocks)
@@ -466,7 +479,8 @@ def cover_choices(atom_sets, block_list, out_labels, dom, ext):
     return choices
 
 
-def sum_group_candidates(terms, term_entries, partial_keep=True):
+def sum_group_candidates(terms, term_entries, partial_keep=True,
+                         locked=None):
     """Group candidates = cofactor families: (canonical cofactor sig,
     canonical rest-carry split). The cofactor may carry some output labels
     (partial keep); the S space is (canonical g-free labels present in
@@ -484,10 +498,15 @@ def sum_group_candidates(terms, term_entries, partial_keep=True):
                         if i not in idxs]
                 labs_g = {l for _, ls in facs for l in ls}
                 rest_labels = {l for _, ls in rest for l in ls}
-                if not partial_keep:
-                    if not ((labs_g & (rest_labels | outpos)) <= rest_labels
-                            and outpos <= rest_labels):
-                        continue
+                full = ((labs_g & (rest_labels | outpos)) <= rest_labels
+                        and outpos <= rest_labels)
+                if not partial_keep and not full:
+                    continue
+                # partial-keep families are sound only for identity-perm
+                # members; locked reps (those with permuted siblings) are
+                # restricted to full-keep families
+                if locked and t in locked and not full:
+                    continue
                 free_g = labs_g & (rest_labels | outpos)
                 sig, ren = canon_sig(facs, term["dom"], free_g,
                                      want_map=True)
@@ -504,6 +523,8 @@ def sum_group_candidates(terms, term_entries, partial_keep=True):
 
 def solve_problem(problem, ext, time_limit=300, sums=True, group=True,
                   partial_keep=True):
+    # reps with non-identity perm members may not join partial-keep families
+    # (the S-sum bookkeeping across shifted keep sets is unsound there)
     """One joint ILP over ALL outputs: cross-output sharing via a shared
     universe; term permutation orbits collapsed (representative solved once,
     members ride as free permutes). Returns (obj, stats)."""
@@ -515,7 +536,7 @@ def solve_problem(problem, ext, time_limit=300, sums=True, group=True,
         for t in terms:
             t["out_rank"] = r
         if group:
-            groups, perms = term_groups(terms)
+            groups, perms, tsigns = term_groups(terms)
             reps = sorted(m[0] for _, m in groups)
             nmemb = {m[0]: len(m) for _, m in groups}
             for t in reps:
@@ -529,10 +550,19 @@ def solve_problem(problem, ext, time_limit=300, sums=True, group=True,
         all_terms.extend(grouped_terms)
         owner.extend([ov] * len(grouped_terms))
         per_out.append({"ov": ov, "terms": terms, "rank": r,
-                        "groups": groups, "perms": perms,
+                        "groups": groups, "perms": perms, "tsigns": tsigns,
                         "rep_base": base})
+    rep_meta = {}
+    for pod in per_out:
+        base = pod["rep_base"]
+        for k, (_, members) in enumerate(pod["groups"]):
+            rep = members[0]
+            rep_meta[base + k] = {
+                "members": [(t, pod["perms"][t]) for t in members],
+                "rank": pod["rank"],
+            }
     res = solve_global(all_terms, ext, time_limit, sums,
-                       partial_keep=partial_keep)
+                       partial_keep=partial_keep, rep_meta=rep_meta)
     if res[0] is None:
         return None
     (obj, sol, U, stats), _ = res
@@ -542,7 +572,7 @@ def solve_problem(problem, ext, time_limit=300, sums=True, group=True,
 
 
 def solve_global(terms, ext, time_limit=300, sums=True,
-                 partial_keep=True):
+                 partial_keep=True, rep_meta=None):
     """Exact multi-level sharing ILP for one definition, plus bounded
     sum-intermediate candidates (factor-out groups over rest families).
     Returns (obj, stats) — cost only, no emission."""
@@ -583,8 +613,9 @@ def solve_global(terms, ext, time_limit=300, sums=True,
     # term-level choices
     tchoices = []
     for t, term in enumerate(terms):
-        blocks = [(idxs, sig, free, ren) for idxs, sig, free, ren in
-                  term_entries[t] if sig in candset]
+        blocks = [(idxs, sig, free, ren, sgn) for
+                  idxs, sig, free, ren, sgn in term_entries[t]
+                  if sig in candset]
         atom_sets = [set(ls) for _, ls in term["factors"]]
         tchoices.append(cover_choices(atom_sets, blocks,
                                       list(range(term["rank"])),
@@ -615,10 +646,20 @@ def solve_global(terms, ext, time_limit=300, sums=True,
     # rests may themselves use materialized product intermediates: each
     # (family, member) gets rest-cover choices, exactly like terms
     rchoices = {}   # (gamma, t) -> [(cover, cost)]
+    extra_rest = {}  # (gamma, t) -> #members needing own rest evaluation
     for gamma, ctx in fam_ctx.items():
         gsig, cf_rest, out_g = gamma
         _, cfree, cdom = canon_record(gsig)
         for (tt, idxs, _) in ctx:
+            term = terms[tt]
+            keep_set = set(range(term["rank"])) - set(out_g)
+            n_extra = 0
+            meta = (rep_meta or {}).get(tt)
+            if meta:
+                for _lt, pi in meta["members"][1:]:
+                    if {pi[q] for q in keep_set} != keep_set:
+                        n_extra += 1
+            extra_rest[(gamma, tt)] = n_extra
             term = terms[tt]
             k = len(term["factors"])
             rest = [term["factors"][i] for i in range(k) if i not in idxs]
@@ -663,7 +704,22 @@ def solve_global(terms, ext, time_limit=300, sums=True,
         for p in range(term0["rank"]):
             if p not in out_g:
                 pcomb *= ext[term0["dom"][p]]
-        comb_cost[gamma] = (2 if cf_rest else 1) * pcomb + add_total
+        # non-identity perm members of covered reps are emitted separately
+        # (plain full evaluation); charge them here
+        extra = 0
+        for tt, _, _ in ctx:
+            meta = (rep_meta or {}).get(tt)
+            if not meta:
+                continue
+            for _lt, pi in meta["members"][1:]:
+                if not all(p == q for p, q in enumerate(pi)):
+                    term = terms[tt]
+                    cst, _, _ = dp_tree([list(ls) for _, ls in
+                                         term["factors"]],
+                                        list(range(term["rank"])),
+                                        term["dom"], ext)
+                    extra += cst
+        comb_cost[gamma] = (2 if cf_rest else 1) * pcomb + add_total + extra
 
     # ---- ILP
     x_idx = {s: i for i, s in enumerate(cand)}
@@ -699,7 +755,7 @@ def solve_global(terms, ext, time_limit=300, sums=True,
     for j, g in enumerate(hvars):
         c[h0 + j] = comb_cost[g]
     for j, (g, t, ci) in enumerate(rvars):
-        c[r0 + j] = r_cov[(g, t)][ci][1]
+        c[r0 + j] = r_cov[(g, t)][ci][1] * (1 + extra_rest[(g, t)])
 
     rows, lb, ub = [], [], []
     # exactly one formation per materialized sig
@@ -791,7 +847,7 @@ def solve_definition(terms, ext, cap=None):
     """One definition (one output). Returns None or
     (obj, chosen, siginfo, groups, perms); chosen[rep_t] =
     (subset, grouped_sig_or_None), keyed by representative term index."""
-    groups, perms = term_groups(terms)
+    groups, perms, _ = term_groups(terms)
     rep_ids = [m[0] for _, m in groups]
     rep_terms = [terms[t] for t in rep_ids]
     entries, siginfo = shared_candidates(rep_terms)
@@ -1042,7 +1098,7 @@ def emit_program(problem, ext):
             s_dom = {str(S_BASE + c): info["cdom"][c] for c in ckeep}
             for l in keep_out:
                 s_dom[str(l)] = terms[0]["dom"][l]
-            sum_args, sum_coeffs = [], []
+            sum_args, sum_coeffs, sum_inputs = [], [], []
             for rep_t in reps:
                 ge = chosen[rep_t][0][chosen[rep_t][1][3]]
                 ren_inv = {v: k for k, v in ge[3].items()}
@@ -1072,7 +1128,7 @@ def emit_program(problem, ext):
             vid = len(values)
             values.append({"LinComb": {
                 "coeff": [[c.numerator, c.denominator] for c in sum_coeffs],
-                "code": {"inputs": [s_order] * len(sum_args),
+                "code": {"inputs": sum_inputs,
                          "output": s_order, "domains": dict(s_dom)},
                 "args": sum_args}})
             # combine g x S -> out (rep space)
@@ -1110,7 +1166,7 @@ def emit_program(problem, ext):
                     values.append({"Einsum": {
                         "coeff": [1, 1],
                         "code": {"inputs": [list(range(r))],
-                                 "output": [pi[p] for p in range(r)],
+                                 "output": [pi_inv[p] for p in range(r)],
                                  "domains": outdom},
                         "args": [ref]}})
                     contribs.append(({"Value": vid}, terms[t]["coeff"]))
@@ -1193,7 +1249,7 @@ def emit_global(solpack, ext):
             s_dom = {str(S_BASE + c): g_cdom[c] for c in cf_rest}
             for l in keep_out:
                 s_dom[str(l)] = terms[0]["dom"][l]
-            sum_args, sum_coeffs = [], []
+            sum_args, sum_coeffs, sum_inputs = [], [], []
             first_ren_inv = None
             for (tg, ci) in members:
                 local_rep = reps[tg - base]
@@ -1222,13 +1278,17 @@ def emit_global(solpack, ext):
                         leaf_info.append(({"Tensor": tid}, tuple(ls)))
                 ref, _ = emit_binary_tree(values, leaf_info, keep_term,
                                           term["dom"], ext)
+                keep_set = set(keep_out)
                 for t in members_of[local_rep]:
                     pi = perms[t]
+                    pi_inv = [pi.index(q) for q in range(r)]
                     if all(p == q for p, q in enumerate(pi)):
                         sum_args.append(ref)
-                    else:
+                        sum_inputs.append(list(s_order))
+                    elif {pi_inv[q] for q in keep_set} == keep_set:
+                        # valid pure permute of the rep's rest
                         out_tuple = ([S_BASE + c for c in cf_rest]
-                                     + [pi[q] for q in keep_out])
+                                     + [pi_inv[q] for q in keep_out])
                         used = set(s_order) | set(out_tuple)
                         vid = len(values)
                         values.append({"Einsum": {
@@ -1241,11 +1301,49 @@ def emit_global(solpack, ext):
                                                  for l in sorted(used)}},
                             "args": [ref]}})
                         sum_args.append({"Value": vid})
+                        sum_inputs.append(list(s_order))
+                    else:
+                        # keep set not preserved: re-emit member's own rest
+                        mterm = terms[t]
+                        ge = None
+                        for cidx in combinations(
+                                range(len(mterm["factors"])), len(rentry[1])):
+                            facs = [mterm["factors"][i] for i in cidx]
+                            labs = {l for _, ls in facs for l in ls}
+                            outside = set(range(r))
+                            for j, (_, ls) in enumerate(mterm["factors"]):
+                                if j not in cidx:
+                                    outside |= set(ls)
+                            free = labs & outside
+                            msig, mren, _ = canon_full(facs, mterm["dom"],
+                                                       free)
+                            if msig == gsig:
+                                ge = (frozenset(cidx), mren)
+                                break
+                        assert ge is not None, "member g-instance not found"
+                        gidxs_m, mren = ge
+                        mren_inv = {v: k for k, v in mren.items()}
+                        mrest = [mterm["factors"][i]
+                                 for i in range(len(mterm["factors"]))
+                                 if i not in gidxs_m]
+                        mkeep = ([mren_inv[c] for c in cf_rest]
+                                 + [p for p in range(r)
+                                    if p in {l for _, ls in mrest
+                                             for l in ls}])
+                        mref, mout = emit_binary_tree(
+                            values, [({"Tensor": tid}, tuple(ls))
+                                     for tid, ls in mrest], mkeep,
+                            mterm["dom"], ext)
+                        sum_args.append(mref)
+                        # map member's out axes to canonical positions
+                        sum_inputs.append(
+                            [S_BASE + c for c in cf_rest]
+                            + [pi[p] for p in mout[len(cf_rest):]])
                     sum_coeffs.append(terms[t]["coeff"])
             vid = len(values)
             values.append({"LinComb": {
                 "coeff": [[c.numerator, c.denominator] for c in sum_coeffs],
-                "code": {"inputs": [s_order] * len(sum_args),
+                "code": {"inputs": sum_inputs,
                          "output": s_order, "domains": dict(s_dom)},
                 "args": sum_args}})
             gref, gorder = cofactor_ref(gsig)
@@ -1262,6 +1360,23 @@ def emit_global(solpack, ext):
                          "domains": step_dom},
                 "args": [gref, {"Value": vid}]}})
             contribs.append(({"Value": vid2}, Fraction(1)))
+
+        # non-identity members of grouped reps: own plain covers
+        for (g2, tg, ci) in sorted(sol["r"]):
+            if not (base <= tg < base + len(reps)):
+                continue
+            local_rep = reps[tg - base]
+            for t in members_of[local_rep][1:]:
+                pi = perms[t]
+                if all(p == q for p, q in enumerate(pi)):
+                    continue
+                mterm = terms[t]
+                leaf_info = [({"Tensor": tid}, tuple(ls))
+                             for tid, ls in mterm["factors"]]
+                ref, _ = emit_binary_tree(values, leaf_info,
+                                          list(range(r)),
+                                          mterm["dom"], ext)
+                contribs.append((ref, mterm["coeff"]))
 
         # ungrouped reps
         for k, local_rep in enumerate(reps):
@@ -1284,6 +1399,7 @@ def emit_global(solpack, ext):
                                       term["dom"], ext)
             for t in members_of[local_rep]:
                 pi = perms[t]
+                pi_inv = [pi.index(q) for q in range(r)]
                 if all(p == q for p, q in enumerate(pi)):
                     contribs.append((ref, terms[t]["coeff"]))
                 else:
@@ -1292,7 +1408,7 @@ def emit_global(solpack, ext):
                     values.append({"Einsum": {
                         "coeff": [1, 1],
                         "code": {"inputs": [list(range(r))],
-                                 "output": [pi[p] for p in range(r)],
+                                 "output": [pi_inv[p] for p in range(r)],
                                  "domains": outdom},
                         "args": [ref]}})
                     contribs.append(({"Value": vid}, terms[t]["coeff"]))
@@ -1417,7 +1533,7 @@ def main():
         problem = json.load(open(prob_path))
         if len(sys.argv) > 5 and sys.argv[5] == "sym":
             SYMS = problem["symmetries"]
-        pack = solve_problem(problem, sizes, partial_keep=False)
+        pack = solve_problem(problem, sizes, partial_keep=True)
         prog = emit_global(pack, sizes)
         priced = price_candidate(prog, sizes)
         json.dump(prog, open(out_path, "w"))
