@@ -178,3 +178,19 @@ Bugs caught by the battery: entry-instance vs sig confusion in group
 rests; MissingIndexDomain/UnusedIndexDomain in group steps; mispriced
 partial-keep combine steps (137G step vs 22.7G objective — caught by the
 priced-vs-objective self-check).
+
+## Verification round 2: partial-keep families, perm direction fix
+
+- numpy microtest settled the permute direction: einsum output=[sigma(p)]
+  computes M[o] = R[o_{sigma(.)}], and the canon relation requires
+  sigma = pi_t^{-1}. ALL corpus perms so far are self-inverse swaps, so
+  earlier oracle passes could not distinguish pi from pi^{-1}; fixed in both
+  permute sites. Latent bug class recorded (needs a cyclic-perm fixture).
+- Families (partial keep) carry identity-perm members only; non-identity
+  members of grouped reps get own plain covers, charged exactly in the ILP.
+- Verified scoreboard (emitted + oracle @ (3,5)): mp3 0.657x win,
+  adc2 1.003x par, ccd 1.39x, ccsd 1.51x.
+- ILP objective vs emitted price agree within lincomb accounting on all four.
+
+Remaining verified-gap lever: sign-aware symmetry exploitation
+(canon_full now returns orbit signs; emission folding not yet wired).
