@@ -465,9 +465,42 @@ def cover_choices(atom_sets, block_list, out_labels, dom, ext):
     return choices
 
 
-def solve_global(terms, ext, time_limit=300):
-    """Exact multi-level sharing ILP for one definition. Returns
-    (obj, stats) — cost only, no emission."""
+def sum_group_candidates(terms, term_entries):
+    """Group candidates = cofactor families: (canonical cofactor sig,
+    canonical rest-carry split). The cofactor may carry some output labels
+    (partial keep); the S space is (canonical g-free labels present in
+    rests) + (out positions present in rests), consistent within a key."""
+    groups = defaultdict(list)   # key -> [(t, idxs)]
+    for t, term in enumerate(terms):
+        k = len(term["factors"])
+        r = term["rank"]
+        outpos = set(range(r))
+        for size in range(1, k):
+            for idxs in combinations(range(k), size):
+                idxs = frozenset(idxs)
+                facs = [term["factors"][i] for i in idxs]
+                rest = [term["factors"][i] for i in range(k)
+                        if i not in idxs]
+                labs_g = {l for _, ls in facs for l in ls}
+                rest_labels = {l for _, ls in rest for l in ls}
+                free_g = labs_g & (rest_labels | outpos)
+                sig, ren = canon_sig(facs, term["dom"], free_g,
+                                     want_map=True)
+                ren_inv = {v: kk for kk, v in ren.items()}
+                cf_rest = tuple(sorted(c for c in ren_inv
+                                       if ren_inv[c] in rest_labels))
+                out_g = tuple(sorted(p for p in range(r)
+                                     if p in labs_g
+                                     and p not in rest_labels))
+                key = (sig, cf_rest, out_g)
+                groups[key].append((t, idxs))
+    return {key: ctx for key, ctx in groups.items() if len(ctx) >= 2}
+
+
+def solve_global(terms, ext, time_limit=300, sums=True):
+    """Exact multi-level sharing ILP for one definition, plus bounded
+    sum-intermediate candidates (factor-out groups over rest families).
+    Returns (obj, stats) — cost only, no emission."""
     t0 = time_mod.time()
     U, term_blocks, term_entries = build_universe(terms)
 
@@ -510,6 +543,48 @@ def solve_global(terms, ext, time_limit=300):
                                       list(range(term["rank"])),
                                       term["dom"], ext))
 
+    # ---- sum-intermediate candidates (cofactor families, partial keep)
+    wvars = []   # (key, contexts, cost, gsig_if_shared_product)
+    if sums:
+        for key, ctx in sum_group_candidates(terms, term_entries).items():
+            gsig, cf_rest, out_g = key
+            gfac = gsig in candset
+            # per-context rest formation (plain DP) and S-space extents
+            rcost = 0
+            s_doms = None
+            for (tt, idxs) in ctx:
+                term = terms[tt]
+                k = len(term["factors"])
+                rest = [term["factors"][i] for i in range(k)
+                        if i not in idxs]
+                facs = [term["factors"][i] for i in sorted(idxs)]
+                labs_g = {l for _, ls in facs for l in ls}
+                rest_labels = {l for _, ls in rest for l in ls}
+                free_g = labs_g & (rest_labels | set(range(term["rank"])))
+                keep = sorted(free_g & rest_labels) + \
+                    sorted(p for p in range(term["rank"]) if p in rest_labels)
+                cst, _, _ = dp_tree([list(ls) for _, ls in rest], keep,
+                                    term["dom"], ext)
+                rcost += cst
+                if s_doms is None:
+                    s_doms = [term["dom"][l] for l in keep]
+            p_add = 1
+            for d in s_doms:
+                p_add *= ext[d]
+            rcost += (len(ctx) - 1) * p_add
+            # combine g x S -> out: labels = free(g) u out_rest; extents:
+            # cfree domains from the sig, out positions from the term
+            info_cfree = canon_record(gsig)[1]
+            info_cdom = canon_record(gsig)[2]
+            pcomb = 1
+            for cid in info_cfree:
+                pcomb *= ext[info_cdom[cid]]
+            for p in range(terms[0]["rank"]):
+                if p not in out_g:
+                    pcomb *= ext[terms[0]["dom"][p]]
+            rcost += (2 if cf_rest else 1) * pcomb
+            wvars.append((key, ctx, rcost, gsig if gfac else None))
+
     # ---- ILP
     x_idx = {s: i for i, s in enumerate(cand)}
     yvars = []   # (sig, cover, cost)
@@ -522,8 +597,11 @@ def solve_global(terms, ext, time_limit=300):
             zvars.append((t, cover, cst))
 
     nx, ny, nz = len(cand), len(yvars), len(zvars)
-    n = nx + ny + nz
+    nw = len(wvars)
+    n = nx + ny + nz + nw
     c = np.zeros(n)
+    for j, (_, _, cst, _) in enumerate(wvars):
+        c[nx + ny + nz + j] = cst
     for i, s in enumerate(cand):
         c[i] = 0.0                      # formation cost charged on y
     for j, (_, _, cst) in enumerate(yvars):
@@ -547,13 +625,23 @@ def solve_global(terms, ext, time_limit=300):
             row[0, nx + j] = 1.0
             row[0, x_idx[b[1]]] = -1.0
             rows.append(row); lb.append(-np.inf); ub.append(0.0)
-    # one cover per term
+    # one cover per term: plain cover OR membership in one sum group
     for t in range(len(terms)):
         row = lil_matrix((1, n))
         for j, (zt, _, _) in enumerate(zvars):
             if zt == t:
                 row[0, nx + ny + j] = 1.0
+        for j, (_, ctx, _, _) in enumerate(wvars):
+            if any(tt == t for tt, _ in ctx):
+                row[0, nx + ny + nz + j] = 1.0
         rows.append(row); lb.append(1.0); ub.append(1.0)
+    # w_gamma <= x_g when the cofactor is a shared product intermediate
+    for j, (_, _, _, gs) in enumerate(wvars):
+        if gs is not None:
+            row = lil_matrix((1, n))
+            row[0, nx + ny + nz + j] = 1.0
+            row[0, x_idx[gs]] = -1.0
+            rows.append(row); lb.append(-np.inf); ub.append(0.0)
     # z <= x
     for j, (zt, cover, _) in enumerate(zvars):
         for b in cover:
@@ -570,7 +658,7 @@ def solve_global(terms, ext, time_limit=300):
                options={"time_limit": time_limit})
     stats = {"U": len(U), "candidates": len(cand), "vars": n,
              "constraints": A.shape[0], "build_s": t_build,
-             "solve_s": res.mip_node_count and None, "status": res.status,
+             "groups": nw, "status": res.status,
              "mip_gap": getattr(res, "mip_gap", None)}
     if res.x is None:
         return None, stats
