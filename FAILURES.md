@@ -237,7 +237,17 @@ study (archive/RESEARCH-v1.md, tag `hl-study-final`).
   trials/exam-cd921bd.jsonl (kind=protected-exam-axis0-addendum).
 - regression: run_exam.py phase B covers all seven problems.
 
-## F-037 Selector's FLOP top-8 prefilter causally blinds model-priced acceptance [OPEN]
+## F-037 Selector's FLOP top-8 prefilter causally blinds model-priced acceptance [CLOSED — prefilter removed]
+- fix: `--prefilter-k` flag, default 0 = model-price ALL enumerated
+  biclique variants (N restores the old top-K behavior for A/B).
+  Validated end-to-end (trials/f037-prefilter.jsonl): ccd select now takes
+  7 accepted steps to 0.8312889073229921 s predicted — bit-identical to
+  the space-dump prefilter-free greedy terminal. The search result still
+  exceeds the Axis-1 cap (10.3205 vs 10.2420 log10), so emission falls
+  back to the verified baseline: search improved, cap enforced. Compile
+  cost: ~44 min for ccd (vs ~2.5 min step-0-converged with the prefilter)
+  — the price of pricing the whole space; recorded as the compile-time
+  budget reference for any future re-narrowing.
 - symptom (I-007 byproduct): `harness select` on ccd converges at step 0
   (no improving move), while the same-instrument prefilter-free greedy in
   `space-dump` reaches 0.831 s (from 1.227 s initial). The selector prices
