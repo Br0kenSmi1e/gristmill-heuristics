@@ -58,3 +58,30 @@ build). All conclusions provisional until then.
   emitted candidates, v2 wall-model pricing of finalists.
 - v1.1: fixpoint/nested sharing; sum-orbit detection; sign-correct
   symmetry emission.
+
+## Global multi-level ILP + sum intermediates (cost-space results)
+
+Commands: `proto.py solveg <problem> 0=16,1=64 [sym]`. Cost-space only
+(no emission yet for the global arm; sym-quotiented numbers are a
+relaxation until sign-correct emission lands).
+
+Complexity at 63-term scale: |U|=146, ~100 shared candidates, <1000 vars,
+<910 constraints, build 0.3 s, solve instant. NO BLOWUP.
+
+FLOP trajectory for CCSD doubles (63 terms), vs gristmill 21.42G:
+- level-1 ILP, no sym: 35.47G (emitted, oracle-pass)
+- global product-only, no sym: 35.11G  <- depth-greediness exonerated
+- global product, sym: 25.20G
+- global product + cofactor-family sums, sym: 23.02G  <- 7.5% above gristmill
+
+Totals (all outputs, sym+sums): mp3 11.29G vs 17.18G (0.66x, win);
+ccd 16.75G vs 16.63G (1.007x, par); ccsd 23.31G vs 21.42G (1.088x);
+adc2 681.8M vs 687.0M (0.9925x).
+
+Residual CCSD gap candidates: cross-cofactor sharing of one sum (gristmill
+V10 pattern: same sum feeding multiple distinct cofactors), rests containing
+intermediates (v2 restricts rests to plain DP), sums-of-sums.
+
+Mechanism notes: group candidates = cofactor families keyed by (cofactor sig,
+canonical rest-carried set); partial keep supported (cofactor may carry out
+labels); singleton cofactors allowed (formation-free).
