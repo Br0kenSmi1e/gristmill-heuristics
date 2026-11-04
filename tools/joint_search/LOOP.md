@@ -8,6 +8,33 @@
 > The repo this branch lives in is shared with another agent — never edit
 > mainline files; never run timing commands except at milestones.
 
+## The goal (terminal criterion)
+
+For every train problem {mp3, ccd, ccsd, adc2}, produce an emitted
+candidate that:
+
+1. **verifies** — truthmill::validate + truthmill::verify + the numerical
+   oracle at (3,5), all pass; and
+2. **strictly beats the same-equation gristmill baseline's FLOP count**
+   at (16,64).
+
+The arm is DONE when both hold on all four. The second clause is the
+space-completeness test: gristmill's schedule is a feasible point of the
+space, so a global optimizer over a complete space cannot sit above it —
+if after the gates the best verified candidate is still above baseline,
+the space is missing a structural class; the loop's job is then to NAME
+it (a new C-entry with a mechanism and a measured value), not to grind
+the solver.
+
+Current state vs the goal (from trials/20261104-181011.jsonl):
+mp3 0.657 PASS | adc2 1.003 (needs the sum-orbit class emitted) |
+ccd 1.016 (needs more sym depth) | ccsd B-006 (verify fails).
+
+After the goal is met: hand the challenger to the mainline tournament
+(I-entry with adoption rule), which owns wall-time (Axis-2) evaluation.
+Stop rule: two consecutive milestones with zero new B/C entries => the
+structure tail is exhausted; declare done or report the blocker.
+
 This directory is a self-contained research loop developing the joint
 ILP+DP selector (a challenger for the mainline's contested factorization
 slot). It follows the mainline's PROTOCOL.md in miniature, adapted to
