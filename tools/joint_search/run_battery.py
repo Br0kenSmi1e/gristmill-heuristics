@@ -30,7 +30,7 @@ os.makedirs(OUT, exist_ok=True)
 
 TRAIN = ["mp3", "ccd", "ccsd", "adc2"]
 FIXTURES = ["antisym_test", "antisym_test2", "ccsd_energy",
-            "ccsd_doubles_38_39_40_42_43"]
+            "ccsd_doubles_38_39_40_42_43", "ccsd_doubles_36_37_50_51"]
 
 
 def load1():
@@ -107,10 +107,8 @@ def main():
     for f in FIXTURES:
         rec = one(os.path.join(HERE, "fixtures", f + ".json"),
                   f, {0: 16, 1: 64}, True)
-        rec["expected_fail"] = f == "ccsd_doubles_38_39_40_42_43"
         record["results"].append(rec)
-        print(f"{f}: pass {rec['check']['pass']}"
-              f"{' (expected fail)' if rec['expected_fail'] else ''}")
+        print(f"{f}: pass {rec['check']['pass']}")
 
     line = json.dumps(record)
     path = os.path.join(TRIALS,
@@ -120,8 +118,7 @@ def main():
     print("logged to", path)
 
     fails = [r["tag"] for r in record["results"]
-             if not r["check"]["pass"]
-             and not r.get("expected_fail")]
+             if not r["check"]["pass"]]
     print("FAILURES:" if fails else "all pass",
           ", ".join(fails) if fails else "")
     sys.exit(1 if fails else 0)

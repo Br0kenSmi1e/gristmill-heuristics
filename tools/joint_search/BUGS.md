@@ -53,19 +53,39 @@ fixture, fix, regression pointer. CLOSED entries kept for audit.
 - regression: fixtures/antisym_test.json, fixtures/antisym_test2.json,
   fixtures/ccsd_energy.json.
 
-## B-006 CCSD doubles verify failure under sym [OPEN]
-- symptom: ccsd doubles fails truthmill::verify with sym on; passes with
-  sym off. ccd/mp3/adc2 pass with sym on.
-- mechanism: NOT verified. History: terms {32,33,37,42} failed before the
-  B-005 sign fixes; that set passes now. Current reproducer (post-fix):
-  terms {38,39,40,42,43} (five T1-containing terms with mixed
-  T2/T3-cofactor nesting; every proper subset passes). Zone: nested shared
-  intermediates under antisymmetry with perm-group interaction.
-- exposing fixture: fixtures/ccsd_doubles_38_39_40_42_43.json
-  (generate via make_fixtures.py). NOTE: fixture membership drifts as
-  fixes land — regenerate and re-bisect before trusting it.
-- next: per-contribution numeric bisector already exists (compare each
-  LinComb arg against the true term).
+## B-006 CCSD doubles verify failure under sym [CLOSED]
+- symptom: ccsd doubles failed truthmill::verify with sym on; passed with
+  sym off. ccd/mp3/adc2 passed with sym on.
+- mechanism: TWO frame errors, both verified numerically
+  (tools/joint_search/diag_contrib.py, harness-faithful per-(tensor,
+  domain-pattern) block model):
+  (i) **formation orbit-sign drop**: `subset_sigs` used `canon_sig`,
+  discarding the orbit sign of a sub-block instance inside a parent's
+  canonical form. Orbit-mining does not commute with canonical
+  relabeling, so a block can sit inside a canonical parent with sign -1
+  (exposed: T1[1,0,4,5] inside the T1+3xT2 intermediate, mined to
+  (0,1,4,5) with sign -1). Every materialization of such a sig was off
+  by -1 everywhere it was used. Fix: `subset_sigs` yields the sign via
+  `canon_full`; the formation folds the product of block signs into the
+  root einsum coeff of the emitted tree (`emit_binary_tree(sign=...)`).
+  Fixture: fixtures/ccsd_doubles_38_39_40_42_43.json (terms
+  {38,39,40,42,43}).
+  (ii) **non-identity perm member double-emit + cancellation**: the
+  family S-sum loop emitted a perm member's own rest with a pi-swapped
+  input placement, while the post-family section ALSO emitted the same
+  member as a standalone plain evaluation (the ILP charges only the
+  standalone). Under antisymmetry the pi-swapped member rest is the
+  exact negative of the rep's rest, so the rep's term canceled out of
+  the S-sum. Fix: family S-sums skip non-identity members; they are
+  covered solely by the standalone path (which the ILP prices).
+  Fixture: fixtures/ccsd_doubles_36_37_50_51.json (terms {36,37,50,51}).
+- exposing fixtures: the two above (regenerate via make_fixtures.py;
+  bisect via tools/joint_search/term_bisect.py).
+- regression: full battery all-pass (trials/20261104-190100.jsonl);
+  ccsd_global_sym verified 1.1039x.
+- history: terms {32,33,37,42} failed before B-005; {38,39,40,42,43}
+  isolated (i); after (i), {36,37,50,51} isolated (ii) via term_bisect
+  ddmin over the 63-term doubles definition.
 
 ## B-007 lincomb micro-accounting [OPEN, minor]
 - symptom: ILP objective vs emitted price differ by tiny amounts
