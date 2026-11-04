@@ -253,3 +253,27 @@ Remaining realization gaps vs the sym-relaxed ILP optima (0.766 ccsd /
 0.878 ccd / 0.748 adc2): the emitted solves lock perm-membered reps out of
 partial-keep families (C-010) and adc2's emitted price is ~7.3M above its
 ILP objective (B-007 lincomb accounting — decisive for adc2's 1.0031x).
+
+## B-007 + C-012: exact lincomb accounting, sum-orbits (milestone)
+
+B-007 mechanism: the ILP never priced final lincombs (adc2: exactly
+7,348,224 = 7,340,032 doubles + 8,192 singles), cross-output families were
+charged once but emitted per output, S-adds counted standalone-bound perm
+members. Fixed; obj - priced == const exactly on mp3/ccd/adc2 (ccsd
+residual 8,448 FLOPs, accepted micro).
+
+C-012 sum-orbits landed (emission + exact w_C cluster pricing): reps with
+identical member (perm, coeff-ratio) signatures share one pre-sum; the
+orbit rides it via free permutes. adc2: 689.09 -> 686.99M.
+
+KEY RETRACTION: the v5-era adc2 514M (0.748x) "legal-space win" was
+underpriced — v5 charged nothing for non-identity perm members of
+family-covered reps (~173M on adc2). The honest adc2 optimum is
+686,989,824 FLOPs == gristmill, an exact tie. The old sym-relaxed numbers
+(ccd 0.878x, ccsd 0.766x) are likewise retracted: with honest pricing the
+ILP optima sit ABOVE gristmill (ccd +1.6%, ccsd +10.3%). By the
+space-completeness clause these residuals are missing structural classes
+(C-013); adc2 needs a tie-break class (C-014).
+
+Verified scoreboard (trials/20261104-192133.jsonl): mp3 0.6566 PASS |
+ccd 1.0161 | ccsd 1.1031 | adc2 1.0000 (tie).

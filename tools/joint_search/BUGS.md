@@ -87,10 +87,19 @@ fixture, fix, regression pointer. CLOSED entries kept for audit.
   isolated (i); after (i), {36,37,50,51} isolated (ii) via term_bisect
   ddmin over the 63-term doubles definition.
 
-## B-007 lincomb micro-accounting [OPEN, minor]
-- symptom: ILP objective vs emitted price differ by tiny amounts
+## B-007 lincomb micro-accounting [CLOSED]
+- symptom: ILP objective vs emitted price differed by tiny amounts
   (mp3: 2 FLOPs; adc2: ~7M of 689M).
-- mechanism: final-lincomb arg counting is not in the ILP objective;
-  off-by-one add conventions per group.
-- not a correctness issue; fix when the wall-time functor lands (the v3
-  pricer will reprice everything anyway).
+- mechanism: VERIFIED — the ILP never charged the final lincombs
+  (adc2: 7,340,032 doubles + 8,192 singles = the exact delta), family
+  S-sum/combine costs were charged once even for cross-output families
+  (emitted per owning output), S-adds counted standalone-bound perm
+  members, and r-covers carried an obsolete extra_rest multiplier.
+- fix: exact accounting — final-lincomb units per contribution (z reps:
+  1 + #non-identity members; families: 1 + #non-id per owning output),
+  per-output S/combine pricing, identity members folded into rep coeffs
+  (C-012 emission), extra_rest dropped. Post-fix: obj - priced = const
+  exactly on mp3/ccd/adc2; ccsd residual 8,448 FLOPs (3.6e-5 relative;
+  accepted as micro-residual, cause unknown).
+- became goal-decisive: adc2's objective already beat gristmill; the
+  honest accounting + C-012 closed the emitted gap to exactly 1.000000.

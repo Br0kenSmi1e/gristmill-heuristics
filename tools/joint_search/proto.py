@@ -524,6 +524,38 @@ def sum_group_candidates(terms, term_entries, partial_keep=True,
     return {key: ctx for key, ctx in groups.items() if len(ctx) >= 2}
 
 
+def sum_orbit_clusters(terms, groups, perms, tsigns):
+    """C-012: cluster reps whose non-identity member (perm, coeff-ratio)
+    signatures are identical, so one pre-sum serves the whole orbit:
+    (A + B) + pi(A + B) instead of A + pi(A) + B + pi(B).
+    Only groups of the form {rep + non-identity members} are eligible
+    (identity members fold into the rep coeff instead). Returns a list of
+    clusters; each cluster is ([rep local ids], [perms], [ratios]).
+    Disjoint: a rep joins at most one cluster (first signature wins)."""
+    sig_map = {}
+    for _, members in groups:
+        rep = members[0]
+        crep = terms[rep]["coeff"]
+        nonid = [(perms[t],
+                  terms[t]["coeff"] * tsigns[t] * tsigns[rep] / crep)
+                 for t in members[1:]]
+        if not nonid:
+            continue
+        if any(all(p == q for p, q in enumerate(pi)) for pi, _ in nonid):
+            continue   # mixed identity/non-identity group: skip
+        sig = tuple((tuple(pi), rho) for pi, rho in nonid)
+        sig_map.setdefault(sig, []).append(rep)
+    clusters = []
+    used = set()
+    for sig, cl in sig_map.items():
+        cl = [r0 for r0 in cl if r0 not in used]
+        if len(cl) >= 2:
+            clusters.append((cl, [tuple(p) for p, _ in sig],
+                             [rho for _, rho in sig]))
+            used.update(cl)
+    return clusters
+
+
 def solve_problem(problem, ext, time_limit=300, sums=True, group=True,
                   partial_keep=True):
     # reps with non-identity perm members may not join partial-keep families
@@ -559,16 +591,29 @@ def solve_problem(problem, ext, time_limit=300, sums=True, group=True,
                         "groups": groups, "perms": perms, "tsigns": tsigns,
                         "rep_base": base})
     rep_meta = {}
+    rep_pout = {}
+    clusters = []
     for pod in per_out:
         base = pod["rep_base"]
+        p_out = 1
+        for p in range(pod["rank"]):
+            p_out *= ext[pod["terms"][0]["dom"][p]]
+        reps_sorted = sorted(m[0] for _, m in pod["groups"])
+        pos = {r0: i for i, r0 in enumerate(reps_sorted)}
         for k, (_, members) in enumerate(pod["groups"]):
             rep = members[0]
             rep_meta[base + k] = {
                 "members": [(t, pod["perms"][t]) for t in members],
                 "rank": pod["rank"],
             }
+            rep_pout[base + k] = (pod["ov"], p_out)
+        for cl, clperms, _rho in sum_orbit_clusters(
+                pod["terms"], pod["groups"], pod["perms"], pod["tsigns"]):
+            saving = (len(cl) - 1) * len(clperms) * p_out
+            clusters.append(([base + pos[r0] for r0 in cl], saving))
     res = solve_global(all_terms, ext, time_limit, sums,
-                       partial_keep=partial_keep, rep_meta=rep_meta)
+                       partial_keep=partial_keep, rep_meta=rep_meta,
+                       rep_pout=rep_pout, clusters=clusters)
     if res[0] is None:
         return None
     (obj, sol, U, stats), _ = res
@@ -578,7 +623,8 @@ def solve_problem(problem, ext, time_limit=300, sums=True, group=True,
 
 
 def solve_global(terms, ext, time_limit=300, sums=True,
-                 partial_keep=True, rep_meta=None):
+                 partial_keep=True, rep_meta=None, rep_pout=None,
+                 clusters=()):
     """Exact multi-level sharing ILP for one definition, plus bounded
     sum-intermediate candidates (factor-out groups over rest families).
     Returns (obj, stats) — cost only, no emission."""
@@ -645,27 +691,21 @@ def solve_global(terms, ext, time_limit=300, sums=True,
 
     # precompute per-(family, member) rest cost and per-sigma add cost
     rcost_rt = {}    # (gamma, t) -> dp(rest) + one add
-    comb_cost = {}   # gamma -> combine cost
+    # S-sum/combine and final-lincomb costs are PER OUTPUT: a family
+    # spanning outputs is emitted once per owning output (B-007).
+    rep_owner = {tt: rep_pout[tt][0] for tt in rep_pout} if rep_pout \
+        else {}
+    comb_cost = {}   # gamma -> combine + S-add + standalone-member cost
     fam_ctx = (sum_group_candidates(terms, term_entries,
                                     partial_keep=partial_keep)
                if sums else {})
     # rests may themselves use materialized product intermediates: each
     # (family, member) gets rest-cover choices, exactly like terms
     rchoices = {}   # (gamma, t) -> [(cover, cost)]
-    extra_rest = {}  # (gamma, t) -> #members needing own rest evaluation
     for gamma, ctx in fam_ctx.items():
         gsig, cf_rest, out_g = gamma
         _, cfree, cdom = canon_record(gsig)
         for (tt, idxs, _, _) in ctx:
-            term = terms[tt]
-            keep_set = set(range(term["rank"])) - set(out_g)
-            n_extra = 0
-            meta = (rep_meta or {}).get(tt)
-            if meta:
-                for _lt, pi in meta["members"][1:]:
-                    if {pi[q] for q in keep_set} != keep_set:
-                        n_extra += 1
-            extra_rest[(gamma, tt)] = n_extra
             term = terms[tt]
             k = len(term["factors"])
             rest = [term["factors"][i] for i in range(k) if i not in idxs]
@@ -692,23 +732,34 @@ def solve_global(terms, ext, time_limit=300, sums=True,
             atom_sets = [set(ls) for _, ls in rest]
             rchoices[(gamma, tt)] = cover_choices(atom_sets, rblocks, keep,
                                                   term["dom"], ext)
-        # S add cost: one add per summed member (incl. perm-members)
-        term0 = terms[ctx[0][0]]
-        p_add = 1
-        for cid in cf_rest:
-            p_add *= ext[cdom[cid]]
-        for p in range(term0["rank"]):
-            if p not in out_g:
-                p_add *= ext[term0["dom"][p]]
-        n_memb = sum(terms[tt].get("nmemb", 1) for tt, _, _, _ in ctx)
-        add_total = max(0, n_memb - 1) * p_add
-        # combine cost: labels = cfree u out_rest
-        pcomb = 1
-        for cid in cfree:
-            pcomb *= ext[cdom[cid]]
-        for p in range(term0["rank"]):
-            if p not in out_g:
-                pcomb *= ext[term0["dom"][p]]
+        # per-output S add + combine costs; only identity-perm members
+        # ride in the S-sum (non-identity are standalone, B-006 fix 2)
+        comb_cost[gamma] = 0
+        by_out = {}
+        for tt, _, _, _ in ctx:
+            by_out.setdefault(rep_owner.get(tt), []).append(tt)
+        for ov, tts in by_out.items():
+            term0 = terms[tts[0]]
+            p_add = 1     # S-space: cf_rest + keep positions
+            for cid in cf_rest:
+                p_add *= ext[cdom[cid]]
+            pcomb = 1     # combine: cfree + keep positions
+            for cid in cfree:
+                pcomb *= ext[cdom[cid]]
+            for p in range(term0["rank"]):
+                if p not in out_g:
+                    p_add *= ext[term0["dom"][p]]
+                    pcomb *= ext[term0["dom"][p]]
+            n_memb = 0
+            for tt in tts:
+                n_memb += 1
+                meta = (rep_meta or {}).get(tt)
+                if meta:
+                    n_memb += sum(
+                        1 for _lt, pi in meta["members"][1:]
+                        if all(p == q for p, q in enumerate(pi)))
+            comb_cost[gamma] += ((2 if cf_rest else 1) * pcomb
+                                 + max(0, n_memb - 1) * p_add)
         # non-identity perm members of covered reps are emitted separately
         # (plain full evaluation); charge them here
         extra = 0
@@ -724,7 +775,7 @@ def solve_global(terms, ext, time_limit=300, sums=True,
                                         list(range(term["rank"])),
                                         term["dom"], ext)
                     extra += cst
-        comb_cost[gamma] = (2 if cf_rest else 1) * pcomb + add_total + extra
+        comb_cost[gamma] += extra
 
     # ---- ILP
     x_idx = {s: i for i, s in enumerate(cand)}
@@ -743,10 +794,12 @@ def solve_global(terms, ext, time_limit=300, sums=True,
 
     nx, ny, nz = len(cand), len(yvars), len(zvars)
     nh, ns, nr = len(hvars), len(svars), len(rvars)
-    n = nx + ny + nz + nh + ns + nr
+    nw = len(clusters)
+    n = nx + ny + nz + nh + ns + nr + nw
     h0 = nx + ny + nz
     s0 = h0 + nh
     r0 = s0 + ns
+    w0 = r0 + nr
     h_idx = {g: i for i, g in enumerate(hvars)}
     s_idx = {sg: i for i, sg in enumerate(svars)}
     r_idx = {rt: i for i, rt in enumerate(rvars)}
@@ -755,12 +808,45 @@ def solve_global(terms, ext, time_limit=300, sums=True,
     c = np.zeros(n)
     for j, (_, _, cst) in enumerate(yvars):
         c[nx + j] = cst
-    for j, (_, _, cst) in enumerate(zvars):
-        c[nx + ny + j] = cst
+    for j, (zt, _, cst) in enumerate(zvars):
+        # final-lincomb add units: an ungrouped rep contributes 1 arg
+        # (identity members fold into its coeff) plus one permuted arg
+        # per non-identity member (B-007/C-012 exact accounting)
+        n_nonid = 0
+        meta = (rep_meta or {}).get(zt)
+        if meta:
+            n_nonid = sum(1 for _lt, pi in meta["members"][1:]
+                          if not all(p == q for p, q in enumerate(pi)))
+        c[nx + ny + j] = cst + (rep_pout[zt][1] * (1 + n_nonid)
+                                if rep_pout else 0)
     for j, g in enumerate(hvars):
-        c[h0 + j] = comb_cost[g]
+        # a chosen family contributes 1 + (#non-identity perm members of
+        # its covered reps, emitted standalone) final-lincomb args
+        lc_units = 0
+        if rep_pout:
+            # a family may span outputs (emitted once per owning output):
+            # sum the per-output lincomb units
+            per_out_units = {}
+            for tt, _, _, _ in fam_ctx[g]:
+                ov, po = rep_pout[tt]
+                n_nonid = 0
+                meta = (rep_meta or {}).get(tt)
+                if meta:
+                    n_nonid = sum(
+                        1 for _lt, pi in meta["members"][1:]
+                        if not all(p == q for p, q in enumerate(pi)))
+                per_out_units.setdefault(ov, [po, 0])
+                per_out_units[ov][1] += n_nonid
+            lc_units = sum(po * (1 + nn)     # 1 family arg per output
+                           for po, nn in per_out_units.values())
+        c[h0 + j] = comb_cost[g] + lc_units
     for j, (g, t, ci) in enumerate(rvars):
-        c[r0 + j] = r_cov[(g, t)][ci][1] * (1 + extra_rest[(g, t)])
+        c[r0 + j] = r_cov[(g, t)][ci][1]
+    # C-012 sum-orbit clusters: if every rep of a cluster is z-covered
+    # (ungrouped), the final lincomb merges the orbit over one pre-sum,
+    # saving (k-1)*(orbit-1) adds of the output size.
+    for ci, (_reps, saving) in enumerate(clusters):
+        c[w0 + ci] = -saving
 
     rows, lb, ub = [], [], []
     # exactly one formation per materialized sig
@@ -813,6 +899,16 @@ def solve_global(terms, ext, time_limit=300, sums=True,
             row = lil_matrix((1, n))
             row[0, h0 + j] = 1.0
             row[0, x_idx[g[0]]] = -1.0
+            rows.append(row); lb.append(-np.inf); ub.append(0.0)
+
+    # w_C <= z_t (z_t = sum of cover choices for rep t)
+    for ci, (cl_reps, _saving) in enumerate(clusters):
+        for t in cl_reps:
+            row = lil_matrix((1, n))
+            row[0, w0 + ci] = 1.0
+            for j, (zt, _, _) in enumerate(zvars):
+                if zt == t:
+                    row[0, nx + ny + j] = -1.0
             rows.append(row); lb.append(-np.inf); ub.append(0.0)
 
     from scipy.sparse import vstack
@@ -1396,7 +1492,11 @@ def emit_global(solpack, ext):
                                           mterm["dom"], ext)
                 contribs.append((ref, mterm["coeff"]))  # plain eval: exact
 
-        # ungrouped reps: evaluate once; perm members ride via permutes
+        # ungrouped reps: evaluate once; perm members ride via permutes.
+        # Identity-perm members fold into the rep's coeff (no extra arg).
+        # C-012 sum-orbits: clusters of reps with identical member
+        # (perm, ratio) signatures share one pre-sum; the orbit rides it.
+        rep_ref = {}
         for k, local_rep in enumerate(reps):
             tg = base + k
             if tg in grouped_reps:
@@ -1419,27 +1519,72 @@ def emit_global(solpack, ext):
             for b in cover:
                 if len(b) > 4:
                     block_sign *= b[4]
+            rep_ref[local_rep] = (ref, block_sign)
+
+        def rep_parts(local_rep):
+            """(ref, folded identity coeff, [(perm, member coeff)])."""
+            ref, bs = rep_ref[local_rep]
+            c_eff = Fraction(0)
+            nonid = []
             for t in members_of[local_rep]:
                 pi = perms[t]
-                pi_inv = [pi.index(q) for q in range(r)]
+                sgn = tsigns[t] * tsigns[local_rep] if t != local_rep else 1
                 if all(p == q for p, q in enumerate(pi)):
-                    contribs.append((ref, terms[t]["coeff"]
-                                     * (block_sign if t == local_rep
-                                        else tsigns[t]
-                                        * tsigns[local_rep]
-                                        * block_sign)))
+                    c_eff += terms[t]["coeff"] * sgn
                 else:
-                    outdom = {str(l): terms[t]["dom"][l] for l in range(r)}
-                    vid = len(values)
-                    values.append({"Einsum": {
-                        "coeff": [1, 1],
-                        "code": {"inputs": [list(range(r))],
-                                 "output": [pi_inv[p] for p in range(r)],
-                                 "domains": outdom},
-                        "args": [ref]}})
-                    contribs.append(({"Value": vid},
-                                     terms[t]["coeff"] * tsigns[t]
-                                     * tsigns[local_rep] * block_sign))
+                    nonid.append((pi, terms[t]["coeff"] * sgn * bs))
+            return ref, c_eff * bs, nonid
+
+        clustered = set()
+        for cl, clperms, rhos in sum_orbit_clusters(terms, groups, perms,
+                                                    tsigns):
+            if any(r0 not in rep_ref for r0 in cl):
+                continue   # partly family-covered: no merge (pricing agrees)
+            sum_args, sum_coeffs = [], []
+            for r0 in cl:
+                ref, c_eff, _ = rep_parts(r0)
+                sum_args.append(ref)
+                sum_coeffs.append(c_eff)
+                clustered.add(r0)
+            vid = len(values)
+            values.append({"LinComb": {
+                "coeff": [[cf.numerator, cf.denominator]
+                          for cf in sum_coeffs],
+                "code": {"inputs": [list(range(r))] * len(sum_args),
+                         "output": list(range(r)),
+                         "domains": {str(l): terms[0]["dom"][l]
+                                     for l in range(r)}},
+                "args": sum_args}})
+            contribs.append(({"Value": vid}, Fraction(1)))
+            for pi, rho in zip(clperms, rhos):
+                pi_inv = [pi.index(q) for q in range(r)]
+                outdom = {str(l): terms[0]["dom"][l] for l in range(r)}
+                vid2 = len(values)
+                values.append({"Einsum": {
+                    "coeff": [1, 1],
+                    "code": {"inputs": [list(range(r))],
+                             "output": [pi_inv[p] for p in range(r)],
+                             "domains": outdom},
+                    "args": [{"Value": vid}]}})
+                contribs.append(({"Value": vid2}, rho))
+
+        for local_rep in sorted(rep_ref):
+            if local_rep in clustered:
+                continue
+            ref, c_eff, nonid = rep_parts(local_rep)
+            if c_eff:
+                contribs.append((ref, c_eff))
+            for pi, cf in nonid:
+                pi_inv = [pi.index(q) for q in range(r)]
+                outdom = {str(l): terms[0]["dom"][l] for l in range(r)}
+                vid = len(values)
+                values.append({"Einsum": {
+                    "coeff": [1, 1],
+                    "code": {"inputs": [list(range(r))],
+                             "output": [pi_inv[p] for p in range(r)],
+                             "domains": outdom},
+                    "args": [ref]}})
+                contribs.append(({"Value": vid}, cf))
 
         outdom = {str(l): terms[0]["dom"][l] for l in range(r)}
         vid = len(values)
