@@ -127,66 +127,102 @@ fn det_greedy_pairs(inputs: &[Vec<u32>], output: &[u32], size_of: &BTreeMap<u32,
 
 use crate::layout::Layouts;
 
-/// Calibrated rates for one thread count.
+/// Calibrated rates for one thread count (model v3, release regime).
 #[derive(Clone, Copy, Debug)]
 pub struct CostRates {
     /// Clean-GEMM rate, flops/s.
     pub r_gemm: f64,
-    /// Backend slow-path rate when operand layouts miss canonical targets.
+    /// Slow-path GEMM rate, working set beyond the L3-effective cliff.
     pub r_slow: f64,
+    /// Slow-path GEMM rate, cache-resident working set (2.4x faster).
+    pub r_slow_in: f64,
     /// Reduction-step rate (step output rank 0, contracted axes present),
     /// operands at canonical targets. THREAD-FLAT by measurement.
     pub r_reduce: f64,
-    /// As r_reduce, operands off canonical targets (strided).
-    pub r_reduce_strided: f64,
-    /// Reduction steps with rank-1 output. At t16 this backend regime is
-    /// pathological AND unstable (6-15x slower than t1, 2.6x session
-    /// variance): priced pessimistically.
+    /// Reduction steps with rank-1 output. At t16 this regime is
+    /// pathological AND unstable (E-core scheduling on the hybrid CPU):
+    /// priced pessimistically.
     pub r_reduce_out1: f64,
-    /// Effective permute/copy bandwidth, bytes/s (charged read+write).
-    pub bw: f64,
-    /// Bandwidth for rank>=5 traffic (permutes, batched multiplies):
-    /// much slower than mid-rank at t1, faster at t16.
-    pub bw_hi: f64,
-    /// Fixed floor per rank>=5 step, seconds (measured overhead the
-    /// dispatch floor misses: ~1.3 ms on tiny rank-6 ops).
+    /// Bandwidth for rank<=4 traffic whose working set fits L3, bytes/s.
+    pub bw_lo_in: f64,
+    /// Bandwidth for rank<=4 traffic exceeding L3, bytes/s.
+    pub bw_lo_out: f64,
+    /// Bandwidth for rank>=5 traffic, working set within L3-effective.
+    pub bw_hi_in: f64,
+    /// Bandwidth for rank>=5 traffic beyond L3-effective (scattered copy).
+    pub bw_hi_out: f64,
+    /// Bandwidth for batched elementwise multiply steps, in-cliff working
+    /// set (streaming, fast) / beyond the reuse cliff.
+    pub bw_mul: f64,
+    pub bw_mul_out: f64,
+    /// Effective rate for rank<=4 single-input permutes (largely view-based).
+    pub bw_view: f64,
+    /// L3-effective working-set threshold in bytes (measured knee: in-cache
+    /// rates hold to ~2x the physical 20 MB L3 on i5-13400F thanks to
+    /// streaming reuse; the cliff is between 21 and 43 MB of traffic).
+    pub l3_bytes: f64,
+    /// Cache cliff for the slow-GEMM compute rate: deep k-reuse keeps the
+    /// rate high well past L3 (measured: in-rate at 48 MB step traffic,
+    /// out-rate at 145 MB), bytes.
+    pub slow_cliff_bytes: f64,
+    /// Per-step floor for materializing steps with output rank >= 3, seconds.
     pub step_floor_hi: f64,
+    /// Per-step floor for materializing steps with output rank 2, seconds.
+    pub step_floor_out2: f64,
+    /// Per-input floor for rank>=5 LinComb permutes (permute_r6), seconds.
+    pub lincomb_floor_hi: f64,
     /// Per-op dispatch floor, seconds.
     pub dispatch: f64,
 }
 
-/// Model v2, calibrated on this box against profiles/calibrate-v1.json
-/// (git f25f374, trials/m11-calibration.jsonl; two guard-compliant
-/// sessions, >=100 ms cases reproduce within 3%).
-///   t1:  clean GEMM 57.7 GF/s, slow path 23.0 GF/s, reduce 0.09/0.04 GF/s,
-///        rank-1-out reduce 0.05 GF/s, bw 2.8 GB/s, rank>=5 bw 0.75 GB/s.
-///   t16: 255.3 / 153.0 GF/s, reduce rates flat (measured: no thread
-///        scaling), rank-1-out reduce 0.006 GF/s (unstable, pessimistic),
-///        bw 4.1, rank>=5 bw 6.5 GB/s.
+/// Model v3, calibrated on this box (i5-13400F, 6P+4E hybrid, L3 20 MB)
+/// against profiles/calibrate-v2.json — release-profile build, merged from
+/// two clean full-grid runs (git 737c26d, loads 0.46/0.63). Cross-session
+/// t1 anchor variance on the hybrid CPU is 20-30% (P/E lottery); the 2x CI
+/// gate absorbs it. Release vs debug changed the reduction class ~50x, so
+/// v1/v2 rates are NOT comparable to v3 (F-033/F-036).
 pub fn rates_for_threads(threads: usize) -> CostRates {
     if threads >= 8 {
         CostRates {
-            r_gemm: 255.3e9,
-            r_slow: 153.0e9,
-            r_reduce: 0.09e9,
-            r_reduce_strided: 0.07e9,
-            r_reduce_out1: 0.006e9,
-            bw: 4.1e9,
-            bw_hi: 6.5e9,
-            step_floor_hi: 1.3e-3,
-            dispatch: 40e-6,
+            r_gemm: 366.5e9,
+            r_slow: 143.7e9,
+            r_slow_in: 256.7e9,
+            r_reduce: 4.15e9,
+            r_reduce_out1: 0.004e9,
+            bw_lo_in: 21.5e9,
+            bw_lo_out: 6.9e9,
+            bw_hi_in: 7.2e9,
+            bw_hi_out: 4.1e9,
+            bw_mul: 25.1e9,
+            bw_mul_out: 15.4e9,
+            bw_view: 19.0e9,
+            l3_bytes: 40e6,
+            slow_cliff_bytes: 100e6,
+            step_floor_hi: 1e-4,
+            step_floor_out2: 1e-4,
+            lincomb_floor_hi: 8e-5,
+            dispatch: 15e-6,
         }
     } else {
         CostRates {
-            r_gemm: 57.7e9,
-            r_slow: 23.0e9,
-            r_reduce: 0.09e9,
-            r_reduce_strided: 0.04e9,
-            r_reduce_out1: 0.05e9,
-            bw: 2.8e9,
-            bw_hi: 0.75e9,
-            step_floor_hi: 1.3e-3,
-            dispatch: 30e-6,
+            r_gemm: 64.0e9,
+            r_slow: 16.9e9,
+            r_slow_in: 39.7e9,
+            r_reduce: 4.2e9,
+            r_reduce_out1: 0.24e9,
+            bw_lo_in: 8.0e9,
+            bw_lo_out: 2.6e9,
+            bw_hi_in: 7.4e9,
+            bw_hi_out: 2.8e9,
+            bw_mul: 17.5e9,
+            bw_mul_out: 6.9e9,
+            bw_view: 10.2e9,
+            l3_bytes: 40e6,
+            slow_cliff_bytes: 100e6,
+            step_floor_hi: 1e-4,
+            step_floor_out2: 1e-4,
+            lincomb_floor_hi: 8e-5,
+            dispatch: 15e-6,
         }
     }
 }
@@ -262,6 +298,7 @@ pub fn op_cost_virtual(
         }
         ValueDef::LinComb(op) => {
             let size_of = label_sizes(&op.code.domains, sizes);
+            let out_rank = op.code.output.len();
             let out_bytes: f64 = op
                 .code
                 .output
@@ -269,14 +306,27 @@ pub fn op_cost_virtual(
                 .map(|l| size_of[&l.0])
                 .product::<usize>() as f64
                 * 8.0;
-            let mut traffic = out_bytes; // one write
+            let mut cost = 0.0;
             for labels in &op.code.inputs {
                 let bytes: f64 =
                     labels.iter().map(|l| size_of[&l.0]).product::<usize>() as f64 * 8.0;
-                // permute/copy + accumulate read
-                traffic += 3.0 * bytes;
+                // permute/copy + accumulate read + share of the output write
+                let traffic = 3.0 * bytes + out_bytes;
+                let bw = if labels.len() >= 5 || out_rank >= 5 {
+                    if traffic <= rates.l3_bytes { rates.bw_hi_in } else { rates.bw_hi_out }
+                } else if traffic <= rates.l3_bytes {
+                    rates.bw_lo_in
+                } else {
+                    rates.bw_lo_out
+                };
+                let mut c = traffic / bw;
+                // Measured per-input permute floor at rank>=5 (permute_r6).
+                if labels.len() >= 5 || out_rank >= 5 {
+                    c = c.max(rates.lincomb_floor_hi);
+                }
+                cost += c;
             }
-            (traffic / rates.bw).max(rates.dispatch)
+            cost.max(rates.dispatch)
         }
     }
 }
@@ -313,6 +363,30 @@ pub fn einsum_cost_model(
         Err(_) => return f64::INFINITY,
     };
     let mut cost = 0.0;
+    // Single-input einsum = pure permute: no contraction steps exist, so
+    // the tree walk prices nothing. Rank<=4 permutes are largely
+    // view-based (measured 40-80 GB/s effective); rank>=5 permutes are
+    // real scattered copies (permute_r6: ~3 GB/s).
+    if phys.len() == 1 {
+        if phys[0] == output {
+            return 0.0;
+        }
+        let bytes: f64 = (phys[0].iter().map(|l| size_of[l]).product::<usize>()
+            + output.iter().map(|l| size_of[l]).product::<usize>())
+            as f64
+            * 8.0;
+        let bw = if output.len() >= 5 {
+            if bytes <= rates.l3_bytes { rates.bw_hi_in } else { rates.bw_hi_out }
+        } else {
+            rates.bw_view
+        };
+        let c = bytes / bw;
+        return if output.len() >= 3 {
+            c.max(rates.step_floor_hi)
+        } else {
+            c
+        };
+    }
     for step in 0..tree.step_count() {
         let Some(plan) = tree.step_plan(step) else {
             continue;
@@ -330,45 +404,128 @@ pub fn einsum_cost_model(
             |labels: &[u32]| labels.iter().map(|l| size_of[l]).product::<usize>() as f64 * 8.0;
         let clean = lhs == gemm.lhs_target_modes() && rhs == gemm.rhs_target_modes();
         let out_rank = out.len();
-        let bw_step = if out_rank >= 5 || lhs.len() >= 5 || rhs.len() >= 5 {
-            rates.bw_hi
+        let max_rank = out_rank.max(lhs.len()).max(rhs.len());
+        let step_bytes = bytes_of(lhs) + bytes_of(rhs) + bytes_of(out);
+        // Bandwidth for traffic-bearing charges: rank>=5 traffic is
+        // scattered and cache-insensitive (bw_hi); rank<=4 splits at the
+        // measured L3 cliff (calibrate-v2: kheavy 8.7->2.7 GB/s past 20 MB).
+        let bw_traffic = if max_rank >= 5 {
+            if step_bytes <= rates.l3_bytes { rates.bw_hi_in } else { rates.bw_hi_out }
+        } else if step_bytes <= rates.l3_bytes {
+            rates.bw_lo_in
         } else {
-            rates.bw
+            rates.bw_lo_out
+        };
+        // Permutes feeding reductions are fused strided passes (stream
+        // once, no repack), priced at the low-rank bandwidth even when the
+        // operands are high-rank (calibrate-v2 chain_step2 vs permute_r6).
+        // The pass footprint is the charged traffic itself (2x the permuted
+        // operand), not the whole step's tensor set.
+        let bw_perm = |traffic: f64| {
+            if traffic <= rates.l3_bytes {
+                rates.bw_lo_in
+            } else {
+                rates.bw_lo_out
+            }
         };
         let dbg = std::env::var("H_MODEL_DEBUG").is_ok();
+        let k_dominant = (gemm.k() as f64) >= (gemm.m() as f64) * (gemm.n() as f64);
+        // Reduce pre-passes (partial sums before GEMM) are real traffic on
+        // GEMM branches; the measured reduction rates already include them.
+        let mut pre_pass = 0.0;
+        if plan.lhs_reduce().is_some() {
+            pre_pass += 2.0 * bytes_of(lhs) / bw_traffic;
+        }
+        if plan.rhs_reduce().is_some() {
+            pre_pass += 2.0 * bytes_of(rhs) / bw_traffic;
+        }
         let mut step_cost = if out_rank == 0 && gemm.k() > 1 {
-            // Reduction-class step: never reaches GEMM (calibrate-v1).
+            // Reduction-class step. Strided operands force a real permute
+            // first (calibrate-v2): price as permute + aligned reduction.
+            // The measured reduce rate INCLUDES any reduce pre-passes, so
+            // none are charged on this branch.
             if clean {
                 flops / rates.r_reduce
             } else {
-                flops / rates.r_reduce_strided
+                // The feeding permute's bandwidth depends on its SCATTER:
+                // adjacent-label runs stream at bw_lo (fabdec), reversals
+                // jump cache lines at bw_hi_out even when small (fedcba).
+                let big = bytes_of(lhs).max(bytes_of(rhs));
+                let scattered = {
+                    let (cur, target) = if lhs != gemm.lhs_target_modes() {
+                        (lhs, gemm.lhs_target_modes())
+                    } else {
+                        (rhs, gemm.rhs_target_modes())
+                    };
+                    // Scattered = mostly-descending traversal of the
+                    // canonical order (reverse-like jumps thrash cache
+                    // lines); a mostly-ascending traversal streams.
+                    let mut desc = 0usize;
+                    for w in cur.windows(2) {
+                        let pa = target.iter().position(|x| *x == w[0]);
+                        let pb = target.iter().position(|x| *x == w[1]);
+                        if matches!((pa, pb), (Some(a), Some(b)) if a > b) {
+                            desc += 1;
+                        }
+                    }
+                    cur.len() > 1 && desc * 2 >= cur.len() - 1
+                };
+                let bw = if scattered {
+                    rates.bw_hi_out
+                } else {
+                    bw_perm(2.0 * big)
+                };
+                2.0 * big / bw + flops / rates.r_reduce
             }
         } else if out_rank == 1 && gemm.k() > 1 {
             // Rank-1-output reduction; pathological at t16 (see rates).
+            // Pre-passes likewise included in the measured rate.
             flops / rates.r_reduce_out1
         } else if gemm.m() == 1 && gemm.n() == 1 {
-            // Pure batched multiply (no contraction): bandwidth-bound.
-            (bytes_of(lhs) + bytes_of(rhs) + bytes_of(out)) / bw_step
+            // Pure batched multiply (no contraction): streaming bandwidth,
+            // cache-split like the slow-GEMM rate (51 MB in, 573 MB out).
+            let bw = if step_bytes <= rates.slow_cliff_bytes {
+                rates.bw_mul
+            } else {
+                rates.bw_mul_out
+            };
+            step_bytes / bw
+        } else if !clean && k_dominant {
+            // F-016 class: k-dominant non-clean contraction (kheavy):
+            // permute-bound traffic + slow-GEMM compute.
+            step_bytes / bw_traffic + flops / rates.r_slow
         } else if clean {
-            flops / rates.r_gemm
+            flops / rates.r_gemm + pre_pass
         } else {
-            flops / rates.r_slow
+            // Slow GEMM splits at the cache cliff like everything else
+            // (calibrate-v2 ccd_slowpath_incache: 39.7 vs 16.9 GF/s t1).
+            let r = if step_bytes <= rates.slow_cliff_bytes {
+                rates.r_slow_in
+            } else {
+                rates.r_slow
+            };
+            flops / r + pre_pass
         };
-        if out != gemm.canonical_output_modes() && !(gemm.m() == 1 && gemm.n() == 1) {
-            // (The batched-multiply branch already charges full traffic.)
-            step_cost += 2.0 * bytes_of(out) / bw_step;
+        if out != gemm.canonical_output_modes()
+            && !(gemm.m() == 1 && gemm.n() == 1)
+            && (clean || !k_dominant)
+        {
+            // GEMM branches price compute only; noncanonical output order
+            // costs the output write through the permute path (the slow
+            // rate already includes internal operand handling).
+            step_cost += bytes_of(out) / bw_traffic;
         }
-        if plan.lhs_reduce().is_some() {
-            step_cost += 2.0 * bytes_of(lhs) / bw_step;
-        }
-        if plan.rhs_reduce().is_some() {
-            step_cost += 2.0 * bytes_of(rhs) / bw_step;
-        }
-        // High-rank steps carry a measured fixed overhead (~1.3 ms at rank
-        // >= 5, calibrate-v1 small scales) that the dispatch floor misses.
-        if out_rank >= 5 || lhs.len() >= 5 || rhs.len() >= 5 {
-            step_cost = step_cost.max(rates.step_floor_hi);
-        }
+        // Materializing-step floors (measured small-size overheads);
+        // reduction steps (out rank <= 1) are exempt — they stay fast
+        // at tiny sizes on release.
+        let floor = if out_rank >= 3 {
+            rates.step_floor_hi
+        } else if out_rank == 2 {
+            rates.step_floor_out2
+        } else {
+            0.0
+        };
+        step_cost = step_cost.max(floor);
         cost += step_cost;
         if dbg {
             eprintln!(

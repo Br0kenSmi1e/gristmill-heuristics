@@ -275,7 +275,8 @@ enum Cmd {
     /// Pure model evaluation against a stored measurement file: no timing.
     ModelCi {
         /// Calibration JSON produced by `harness calibrate --out`.
-        #[arg(long, default_value = "profiles/calibrate-v1.json")]
+        /// v2 = release-profile rates basis (F-036); v1 is the debug record.
+        #[arg(long, default_value = "profiles/calibrate-v2.json")]
         from: PathBuf,
     },
     /// Per-op timing profile of one program execution (prepared plans).
