@@ -46,12 +46,20 @@ PROTOCOL.md. What is broken: FAILURES.md. What we might try: IDEAS.md.
   are complementary; both are needed.
 - **Memory is a feasibility constraint**, not just performance (naive EOM
   needs >1 GB of temporaries; CCSD(T) D3 input alone is 8.6 GB at (16,64)).
-- **The backend's reduction path is a third cost regime** (M1.1 grid,
-  profiles/calibrate-v1.json): contractions with output rank 0/1 run at
-  0.02–0.09 GF/s t1 — even a rank-1 dot product — with no t16 scaling
-  (negative for rank-1 output). Matricizable contractions run at the
-  calibrated clean/slow GEMM rates; low-rank n-ary chains are fine.
-  Splitting n-ary reductions into binaries does not rescue them.
+- **The backend's reduction path is a separate cost regime** — but its
+  magnitude is PROFILE-dependent (F-033/F-036): 0.02-0.09 GF/s on debug,
+  4.2 GF/s on release (15x below clean GEMM, thread-flat). v1/v2's 600x
+  catastrophe was largely a debug artifact. All rates are release-regime
+  (calibrate-v2) since model v3.
+- **Rates split by cache regime, not just op class** (model v3): slow GEMM
+  2.4x faster in-cliff than out (39.7 vs 16.9 GF/s t1); bandwidth splits by
+  rank (scattered rank>=5) AND working set (L3-effective 40 MB cliff);
+  k-dominant non-clean contractions are permute-bound. Machine: i5-13400F
+  6P+4E hybrid — t1 numbers carry a 20-30% P/E-core lottery; several t16
+  mid-size classes are unstable (documented CI exceptions).
+- **Model v3 program-level validation (release, gristmill-free references)**:
+  totals within 1.12-1.58x, per-op spearman 0.89-0.96 (v2 era: 0.37).
+  trials/model-v3.jsonl.
 - **Measurement hygiene is load-bearing**: one contaminated batch cost a
   full re-measurement cycle; one weak baseline fabricated a 1.42x "win".
   Both are now protocol rules, and the load guard is structural inside the
@@ -79,14 +87,8 @@ PROTOCOL.md. What is broken: FAILURES.md. What we might try: IDEAS.md.
 
 ## Next investment
 
-Milestone exam-cd921bd CLOSED: EXAM + TOURNAMENT done, CRITIC challenges
-F-027..F-034 answered (F-028 deterministic planner; F-033 release ratios
-falsified the debug mp3 win's magnitude; F-034's tournament run
-mechanically — challenger emits identical programs). M2 algorithm
-selection (I-007, tested): model v3 FIRST — F-016's gap classes must be
-priced before space/search conclusions are sound on ccd/ccsd; adc2 is
-genuinely space-bound; I-001 (search depth) deprioritized everywhere.
-Queued: F-037 (selector prefilter defect, cheap and independent), F-036
-(release-profile migration), F-005/I-006 (enumeration budget), F-035
-(execution-tree nondeterminism; whether the compiler owns tree selection
-is an M2 decision interacting with I-002).
+Model v3 landed on the release regime (33a4e83). The v3 rates change
+selector pricing -> candidates regenerate -> a milestone exam on RELEASE
+is due (run_exam.py must flip to the release binary). Then: F-016's v3
+held-out ADC2 evaluation at that milestone; F-005/I-006 enumeration
+budget; F-035 execution-tree pinning decision; F-017 memory wall.

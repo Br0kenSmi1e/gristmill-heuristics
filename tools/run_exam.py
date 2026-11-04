@@ -27,11 +27,10 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-# Binary profile is pinned to debug: calibrate-v1 rates and all model v2
-# data were measured with the debug build, and exam arms must match the
-# calibration regime. (a8bf146 never recorded its binary profile; this
-# exam does. Release-profile exams are future hygiene, not mixed in.)
-HARNESS = ROOT / "target" / "debug" / "harness"
+# Binary profile: RELEASE since model v3 (F-036) — SPEC measures the
+# compiler's artifact, and v3 rates are release-calibrated. (a8bf146 never
+# recorded its profile; cd921bd pinned debug.)
+HARNESS = ROOT / "target" / "release" / "harness"
 TRIALS = ROOT / "trials"
 
 # Corpus order: train first, then held-out. ccsd_t last; its memory-guard
@@ -85,7 +84,7 @@ def main():
     exam_path = TRIALS / f"exam-{git}.jsonl"
     runs = runs_path.open("a")
     summary = {"git": git, "kind": "protected-exam", "load_at_start": loadavg(),
-               "harness": str(HARNESS), "binary_profile": "debug",
+               "harness": str(HARNESS), "binary_profile": "release",
                "harness_sha256": sha256(HARNESS), "phases": {}}
     print(f"exam start: git {git}, load {summary['load_at_start']}, runs -> {runs_path}")
 

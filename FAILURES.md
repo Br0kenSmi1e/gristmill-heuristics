@@ -9,17 +9,14 @@ fixture, fix, regression pointer. CLOSED entries are kept for audit
 - **F-005** kernel enumeration explodes on large defs — I-006
 - **F-007** selector behind gristmill on ADC2/EOM — ADC2 mechanism verified;
   under model v2 the selector beats baseline only on mp3 (exam-cd921bd)
-- **F-016** model error untracked on held-out — calibration owned by M1;
-  new v2 gap classes (k-heavy low-rank-out, lincomb rank-6) logged
+- **F-016** v3 priced the gap classes (kheavy/singlek/lincomb floor);
+  program-level validation green on release references; ADC2 held-out eval
+  of v3 due at the next milestone
 - **F-017** CCSD(T) memory: HARD blocker, no full-size reruns
 - **F-035** backend n-ary execution planning nondeterministic per process
   (F-028's mechanism on the execution side; wall-time impact unmeasured)
-- **F-036** migrate calibration + exams to the release binary profile
-  (F-033: debug does not preserve ratios — the mp3 win is 1.19x debug,
-  1.02-1.04x release t1)
-- **F-037** selector FLOP top-8 prefilter causally blinds model-priced
-  acceptance (I-007 finding: prefilter-free ccd greedy reaches 0.831 s
-  where the selector converged at step 0)
+- **F-036** release calibration DONE (calibrate-v2, model v3); re-exam on
+  release pending (milestone)
 - **F-027..F-034** milestone critic challenges — ALL ANSWERED (F-028/033/
   027 closed with new evidence: deterministic model planner, release-ratio
   falsification, mp3 replication; F-029/030/031/032/034 closed on records;
