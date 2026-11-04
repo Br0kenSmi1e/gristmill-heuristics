@@ -182,6 +182,41 @@ const CASES: &[Case] = &[
         scales: &[(0, 64), (0, 128)],
         flop_model: FlopModel::Contraction,
     },
+    // F-016 gap classes (surfaced on ccsd_gristmill op#19/op#23):
+    Case {
+        // k-heavy low-rank-output: contract v^2, output v x v.
+        name: "kheavy_r2out",
+        einsum: "ab,bcad->cd",
+        dims: &[('a', V), ('b', V), ('c', V), ('d', V)],
+        scales: &[(8, 16), (16, 32), (24, 48)],
+        flop_model: FlopModel::Contraction,
+    },
+    Case {
+        // Single contracted index, rank-4 output (op#23 class).
+        name: "singlek_r4out",
+        einsum: "ab,cdae->bcde",
+        dims: &[('a', V), ('b', O), ('c', V), ('d', V), ('e', V)],
+        scales: &[(8, 16), (16, 32)],
+        flop_model: FlopModel::Contraction,
+    },
+    Case {
+        // Pure rank-6 permute: proxy for the per-input permute floor that
+        // rank-6 LinComb ops showed (F-016 class c).
+        name: "permute_r6",
+        einsum: "abcdef->fedcba",
+        dims: &[('a', V), ('b', V), ('c', V), ('d', O), ('e', O), ('f', O)],
+        scales: &[(4, 8), (12, 24)],
+        flop_model: FlopModel::Elementwise,
+    },
+    Case {
+        // Rank-4 permute control (isolates the rank dependence of the
+        // permute floor).
+        name: "permute_r4",
+        einsum: "abcd->dcba",
+        dims: &[('a', V), ('b', V), ('c', O), ('d', O)],
+        scales: &[(8, 32), (16, 64)],
+        flop_model: FlopModel::Elementwise,
+    },
 ];
 
 fn rand_tensor(dims: &[usize], seed: u64) -> Tensor {
