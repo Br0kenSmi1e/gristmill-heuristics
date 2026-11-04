@@ -562,6 +562,9 @@ def solve_global(terms, ext, time_limit=300, sums=True):
     rcost_rt = {}    # (gamma, t) -> dp(rest) + one add
     comb_cost = {}   # gamma -> combine cost
     fam_ctx = sum_group_candidates(terms, term_entries)
+    # rests may themselves use materialized product intermediates: each
+    # (family, member) gets rest-cover choices, exactly like terms
+    rchoices = {}   # (gamma, t) -> [(cover, cost)]
     for gamma, ctx in fam_ctx.items():
         gsig, cf_rest, out_g = gamma
         _, cfree, cdom = canon_record(gsig)
@@ -574,9 +577,24 @@ def solve_global(terms, ext, time_limit=300, sums=True):
                            [term["factors"][i] for i in sorted(idxs)]
                            for l in ls} & rest_labels) + \
                 sorted(p for p in range(term["rank"]) if p in rest_labels)
-            cst, _, _ = dp_tree([list(ls) for _, ls in rest], keep,
-                                term["dom"], ext)
-            rcost_rt[(gamma, tt)] = cst
+            # eligible blocks: candidate sigs that are subsets of the rest
+            rblocks = []
+            for size in range(2, len(rest) + 1):
+                for cidx in combinations(range(len(rest)), size):
+                    cidx = frozenset(cidx)
+                    facs = [rest[i] for i in cidx]
+                    labs = {l for _, ls in facs for l in ls}
+                    outside = set(keep)
+                    for j, (_, ls) in enumerate(rest):
+                        if j not in cidx:
+                            outside |= set(ls)
+                    free = labs & outside
+                    ssig = canon_sig(facs, term["dom"], free)
+                    if ssig in candset:
+                        rblocks.append((cidx, ssig, free, None))
+            atom_sets = [set(ls) for _, ls in rest]
+            rchoices[(gamma, tt)] = cover_choices(atom_sets, rblocks, keep,
+                                                  term["dom"], ext)
         # S add cost: one add per member beyond the first
         p_add = 1
         for cid in cf_rest:
@@ -606,7 +624,8 @@ def solve_global(terms, ext, time_limit=300, sums=True):
             zvars.append((t, cover, cst))
     hvars = sorted(fam_ctx)                    # gamma
     svars = sorted({fam_sigma[g] for g in hvars})
-    rvars = [(g, t) for g in hvars for t, _ in fam_ctx[g]]
+    rvars = [(g, t, ci) for (g, t), chs in rchoices.items()
+             for ci in range(len(chs))]
 
     nx, ny, nz = len(cand), len(yvars), len(zvars)
     nh, ns, nr = len(hvars), len(svars), len(rvars)
@@ -617,6 +636,7 @@ def solve_global(terms, ext, time_limit=300, sums=True):
     h_idx = {g: i for i, g in enumerate(hvars)}
     s_idx = {sg: i for i, sg in enumerate(svars)}
     r_idx = {rt: i for i, rt in enumerate(rvars)}
+    r_cov = {rt: chs for rt, chs in rchoices.items()}
 
     c = np.zeros(n)
     for j, (_, _, cst) in enumerate(yvars):
@@ -625,8 +645,8 @@ def solve_global(terms, ext, time_limit=300, sums=True):
         c[nx + ny + j] = cst
     for j, g in enumerate(hvars):
         c[h0 + j] = comb_cost[g]
-    for j, (g, t) in enumerate(rvars):
-        c[r0 + j] = rcost_rt[(g, t)]
+    for j, (g, t, ci) in enumerate(rvars):
+        c[r0 + j] = r_cov[(g, t)][ci][1]
 
     rows, lb, ub = [], [], []
     # exactly one formation per materialized sig
@@ -649,7 +669,7 @@ def solve_global(terms, ext, time_limit=300, sums=True):
         for j, (zt, _, _) in enumerate(zvars):
             if zt == t:
                 row[0, nx + ny + j] = 1.0
-        for j, (g, tt) in enumerate(rvars):
+        for j, (g, tt, ci) in enumerate(rvars):
             if tt == t:
                 row[0, r0 + j] = 1.0
         rows.append(row); lb.append(1.0); ub.append(1.0)
@@ -659,12 +679,17 @@ def solve_global(terms, ext, time_limit=300, sums=True):
             row[0, nx + ny + j] = 1.0
             row[0, x_idx[b[1]]] = -1.0
             rows.append(row); lb.append(-np.inf); ub.append(0.0)
-    # r <= h, h <= s, h <= x_g
-    for j, (g, t) in enumerate(rvars):
+    # r <= h, r <= x_B for blocks in the rest cover; h <= s; h <= x_g
+    for j, (g, t, ci) in enumerate(rvars):
         row = lil_matrix((1, n))
         row[0, r0 + j] = 1.0
         row[0, h0 + h_idx[g]] = -1.0
         rows.append(row); lb.append(-np.inf); ub.append(0.0)
+        for b in r_cov[(g, t)][ci][0]:
+            row = lil_matrix((1, n))
+            row[0, r0 + j] = 1.0
+            row[0, x_idx[b[1]]] = -1.0
+            rows.append(row); lb.append(-np.inf); ub.append(0.0)
     for j, g in enumerate(hvars):
         row = lil_matrix((1, n))
         row[0, h0 + j] = 1.0
