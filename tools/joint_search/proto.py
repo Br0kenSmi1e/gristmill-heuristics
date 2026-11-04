@@ -371,6 +371,10 @@ def disjoint_subsets(ent):
 
 # ------------------------------------------------------------------ the ILP
 
+def keep_out_full(term):
+    return tuple(range(term["rank"]))
+
+
 def solve_definition(terms, ext, cap=None):
     """One definition (one output). Returns None or
     (obj, chosen, siginfo, groups, perms); chosen[rep_t] =
@@ -409,23 +413,37 @@ def solve_definition(terms, ext, cap=None):
             cst, _, _ = dp_tree(atoms, list(range(term["rank"])),
                                 term["dom"], ext)
             zvars.append((t, subset, None, cst))
-            # grouped variants: one sig factors out; the rest sums first
-            for e in subset:
+            # grouped variants: one ENTRY of the subset factors out; the rest
+            # (including other entries, even of the same sig) sums first.
+            for ei, e in enumerate(subset):
                 g = e[1]
-                rest = [sorted(x[2]) for x in subset if x[1] != g] + singles
-                rest_out = sorted(e[2]) + list(range(term["rank"]))
-                cst, _, _ = dp_tree(rest, rest_out, term["dom"], ext)
+                rest = [sorted(x[2]) for j, x in enumerate(subset)
+                        if j != ei] + singles
+                if not rest:
+                    continue
+                rest_labels = set().union(*(set(a) for a in rest))
+                # v1: group only full-keep rests (carry free(g) union out),
+                # so the sum space is uniform and permutes stay pure.
+                if not (set(e[2]) | set(range(term["rank"]))) <= rest_labels:
+                    continue
+                keep = sorted(e[2]) + list(range(term["rank"]))
+                cst, _, _ = dp_tree(rest, keep, term["dom"], ext)
                 add = 1
-                for l in rest_out:
+                for l in keep:
                     add *= ext[term["dom"][l]]
-                # -osize: this term no longer occupies a final-lincomb arg
-                zvars.append((t, subset, g, cst + add - osize))
+                ckeep = tuple(sorted(e[3][l] for l in e[2]))
+                zvars.append((t, subset, (g, ckeep, keep_out_full(term), ei),
+                              cst + add - osize))
 
     nz = len(zvars)
     xsigs = sigs
     nx = len(xsigs)
+    # group vars keyed by (sig, canonical keep ids, keep-out, ) -- the
+    # entry index within the subset is per-term and not part of the key
+    gkeys = sorted({z[2][:3] for z in zvars if z[2] is not None})
+    w_idx = {k: i for i, k in enumerate(gkeys)}
     wbase = nz + nx
-    nw = len(sigs)
+    nw = len(gkeys)
     n = nz + nx + nw
 
     c = np.zeros(n)
@@ -433,19 +451,20 @@ def solve_definition(terms, ext, cap=None):
         c[j] = zvars[j][3]
     for i, s in enumerate(xsigs):
         c[nz + i] = icost[s]
-    for i, s in enumerate(sigs):
+    r0 = terms[0]["rank"]
+    osize = 1
+    for l in range(r0):
+        osize *= ext[terms[0]["dom"][l]]
+    for k, (s, ckeep, keep_out) in enumerate(gkeys):
         info = siginfo[s]
-        r0 = terms[0]["rank"]
         p = 1
         for l in info["cfree"]:
             p *= ext[info["cdom"][l]]
-        for l in range(r0):
+        for l in keep_out:
             p *= ext[terms[0]["dom"][l]]
-        osize = 1
-        for l in range(r0):
-            osize *= ext[terms[0]["dom"][l]]
-        # group cost: materialize g once + one combine g x S + one lincomb arg
-        c[wbase + i] = icost[s] + 2 * p + osize
+        # group cost: one combine g x S + one lincomb arg; the intermediate
+        # itself is charged via x_s (constraint w <= x below)
+        c[wbase + k] = 2 * p + osize
     integrality = np.ones(n)
     bounds = Bounds(np.zeros(n), np.ones(n))
 
@@ -459,16 +478,24 @@ def solve_definition(terms, ext, cap=None):
         lb.append(1.0)
         ub.append(1.0)
     for j, (t, subset, grouped, _) in enumerate(zvars):
-        for e in subset:
+        for ei, e in enumerate(subset):
             row = lil_matrix((1, n))
             row[0, j] = 1.0
-            if e[1] == grouped:
-                row[0, wbase + x_idx[e[1]]] = -1.0  # needs w_g
+            if grouped is not None and ei == grouped[3]:
+                row[0, wbase + w_idx[grouped[:3]]] = -1.0  # needs w_group
             else:
-                row[0, nz + x_idx[e[1]]] = -1.0     # needs x_g
+                row[0, nz + x_idx[e[1]]] = -1.0            # needs x_g
             rows.append(row)
             lb.append(-np.inf)
             ub.append(0.0)
+    # group requires its intermediate materialized: w_gk <= x_sig
+    for k, (s, _, _) in enumerate(gkeys):
+        row = lil_matrix((1, n))
+        row[0, wbase + k] = 1.0
+        row[0, nz + x_idx[s]] = -1.0
+        rows.append(row)
+        lb.append(-np.inf)
+        ub.append(0.0)
     if cap is not None:
         row = lil_matrix((1, n))
         for j in range(n):
@@ -555,21 +582,18 @@ def emit_program(problem, ext):
         if res is None:
             raise RuntimeError(f"ILP failed on output {ov}")
         obj, chosen, siginfo, groups, perms = res
-        members_of = {}   # rep term index -> [member term indices]
-        for sig, members in groups:
-            members_of[members[0]] = members
+        members_of = {m[0]: m for _, m in groups}
 
         indiv, grouped = set(), defaultdict(list)
         for rep_t, (subset, g) in chosen.items():
-            for e in subset:
-                if e[1] == g:
-                    grouped[g].append(rep_t)
+            for ei, e in enumerate(subset):
+                if g is not None and ei == g[3]:
+                    grouped[g[:3]].append(rep_t)
                 else:
                     indiv.add(e[1])
 
-        # materialize shared intermediates (individual + group factors)
         sig_value = {}
-        for s in sorted(indiv | set(grouped)):
+        for s in sorted(indiv | {g for (g, _, _) in grouped}):
             info = siginfo[s]
             leaf_info = [({"Tensor": tid}, ls) for tid, ls in
                          info["cfactors"]]
@@ -578,14 +602,14 @@ def emit_program(problem, ext):
                                         ext)
             sig_value[s] = (ref, out)
 
-        def emit_rest(rep_t, out_order):
+        def emit_rest(rep_t, keep_term_labels, skip_sig, skip_ei=-1):
             term = terms[rep_t]
-            subset, g = chosen[rep_t]
+            subset, _ = chosen[rep_t]
             usedf = frozenset().union(*(e[0] for e in subset)) if subset \
                 else frozenset()
             leaf_info = []
-            for e in subset:
-                if e[1] == g:
+            for ei, e in enumerate(subset):
+                if ei == skip_ei:
                     continue
                 _, sig, free, ren = e
                 ref, order = sig_value[sig]
@@ -594,39 +618,42 @@ def emit_program(problem, ext):
             for i, (tid, ls) in enumerate(term["factors"]):
                 if i not in usedf:
                     leaf_info.append(({"Tensor": tid}, tuple(ls)))
-            return emit_binary_tree(values, leaf_info, out_order,
+            return emit_binary_tree(values, leaf_info, keep_term_labels,
                                     term["dom"], ext)
 
         contribs = []   # (argref, coeff) for the final lincomb
 
-        # factor-out groups: S = sum of (permuted) rests, then one combine
-        for g, reps in grouped.items():
+        for (g, ckeep, keep_out), reps in grouped.items():
             info = siginfo[g]
             cfree = list(info["cfree"])
-            s_order = [S_BASE + c for c in cfree] + list(range(r))
-            s_dom = {str(S_BASE + c): info["cdom"][c] for c in cfree}
-            for l in range(r):
+            s_order = [S_BASE + c for c in ckeep] + list(keep_out)
+            s_dom = {str(S_BASE + c): info["cdom"][c] for c in ckeep}
+            for l in keep_out:
                 s_dom[str(l)] = terms[0]["dom"][l]
             sum_args, sum_coeffs = [], []
             for rep_t in reps:
-                ge = [e for e in chosen[rep_t][0] if e[1] == g][0]
+                ge = chosen[rep_t][0][chosen[rep_t][1][3]]
                 ren_inv = {v: k for k, v in ge[3].items()}
-                rest_out = [ren_inv[c] for c in cfree] + list(range(r))
-                ref, _ = emit_rest(rep_t, rest_out)
-                # members: permute rest over output positions
+                keep_term = [ren_inv[c] for c in ckeep] + list(keep_out)
+                ref, _ = emit_rest(rep_t, keep_term, g, chosen[rep_t][1][3])
                 for t in members_of[rep_t]:
                     pi = perms[t]
                     if all(p == q for p, q in enumerate(pi)):
                         sum_args.append(ref)
                     else:
+                        out_tuple = ([S_BASE + c for c in ckeep]
+                                     + [pi[q] for q in keep_out])
+                        used = set(s_order) | set(out_tuple)
                         vid = len(values)
                         values.append({"Einsum": {
                             "coeff": [1, 1],
                             "code": {
                                 "inputs": [s_order],
-                                "output": [S_BASE + c for c in cfree]
-                                          + [0] * 0 + [pi[p] for p in range(r)],
-                                "domains": dict(s_dom)},
+                                "output": out_tuple,
+                                "domains": {str(l): s_dom[str(l)]
+                                            if str(l) in s_dom else
+                                            terms[0]["dom"][l]
+                                            for l in sorted(used)}},
                             "args": [ref]}})
                         sum_args.append({"Value": vid})
                     sum_coeffs.append(terms[t]["coeff"])
@@ -634,15 +661,25 @@ def emit_program(problem, ext):
             values.append({"LinComb": {
                 "coeff": [[c.numerator, c.denominator] for c in sum_coeffs],
                 "code": {"inputs": [s_order] * len(sum_args),
-                         "output": s_order, "domains": s_dom},
+                         "output": s_order, "domains": dict(s_dom)},
                 "args": sum_args}})
+            # combine g x S -> out (rep space)
+            rep0 = reps[0]
+            ge0 = chosen[rep0][0][chosen[rep0][1][3]]
+            ren_inv0 = {v: k for k, v in ge0[3].items()}
             gref, gorder = sig_value[g]
+            gin = [S_BASE + cid if cid in ckeep else ren_inv0[cid]
+                   for cid in gorder]
+            step_dom = dict(s_dom)
+            for l in gin + s_order:
+                if l < S_BASE and str(l) not in step_dom:
+                    step_dom[str(l)] = terms[0]["dom"][l]
             vid2 = len(values)
             values.append({"Einsum": {
                 "coeff": [1, 1],
-                "code": {"inputs": [[S_BASE + c for c in gorder], s_order],
+                "code": {"inputs": [gin, s_order],
                          "output": list(range(r)),
-                         "domains": dict(s_dom)},
+                         "domains": step_dom},
                 "args": [gref, {"Value": vid}]}})
             contribs.append(({"Value": vid2}, Fraction(1)))
 
@@ -650,7 +687,7 @@ def emit_program(problem, ext):
         for rep_t, (subset, g) in chosen.items():
             if g is not None:
                 continue
-            ref, _ = emit_rest(rep_t, list(range(r)))
+            ref, _ = emit_rest(rep_t, list(range(r)), None)
             for t in members_of[rep_t]:
                 pi = perms[t]
                 if all(p == q for p, q in enumerate(pi)):
