@@ -147,3 +147,34 @@ Complexity ceiling so far: 1872 vars / 2375 cons / <1 s. No blowup anywhere.
 
 Open classes (small, named): sums-of-sums; unsummed-precursor sharing;
 lincomb micro-accounting (~1M on mp3-scale numbers).
+
+## Global-arm emitter + full verification battery (stage: verify)
+
+Global-arm emitter implemented: recursive formation emission (sigs by
+increasing factor count — blocks are strict subsets, so acyclic), term
+covers, family groups, perm-members, final lincombs. Battery:
+`solvegemit <problem> 0=16,1=64 <out.json>` (partial_keep=False for
+emission) + `harness check` at (3,5).
+
+VERIFIED (emitted + truthmill validate + numerical oracle, worst rel
+<= 5.2e-16, ILP objective == emitted price within lincomb accounting):
+- mp3 11.283G (0.657x gristmill) — global-arm win, verified
+- adc2 689.2M (1.003x) — par
+- ccd 23.71G (1.426x) — behind
+- ccsd 35.35G (1.65x) — behind
+
+Cost-space-only (NOT yet realizable; ILP optima over the relaxed space):
+- with sym quotient + partial-keep families + cross-cofactor sums:
+  mp3 0.657x, adc2 0.748x, ccd 0.878x, ccsd 0.766x.
+- legal (no-sym) cost-space: ccd 1.25x, ccsd 1.06x.
+
+The realization gap decomposes into: (a) sign-correct symmetry emission
+(sym numbers are a relaxation until then); (b) partial-keep family
+emission (perm-members under partial keep need position-set-aware S
+spaces; currently restricted to full-keep, which is sound and verified);
+(c) both are engineering, not theory.
+
+Bugs caught by the battery: entry-instance vs sig confusion in group
+rests; MissingIndexDomain/UnusedIndexDomain in group steps; mispriced
+partial-keep combine steps (137G step vs 22.7G objective — caught by the
+priced-vs-objective self-check).
