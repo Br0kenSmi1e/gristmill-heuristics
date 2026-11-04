@@ -27,6 +27,16 @@ landed classes.
   value: ccsd total 21.45 → 16.40G (sym-relaxed); legal no-sym
   22.69G. ADC2: 681.8 → 514M; ccd: 16.74 → 14.60G (sym-relaxed).
   Perm direction bug (B-001) found and fixed here.
+  CORRECTION (20261104): the adc2 514M figure was UNDERPRICED — v5-era
+  accounting charged nothing for non-identity perm members of
+  family-covered reps. The honest adc2 optimum is 687.0M == gristmill.
+- **C-012 sum-orbits (pre-sum shared across a perm orbit)**
+  value: adc2 689.09 → 686.99M (== gristmill, exact tie); ccd 2.1M;
+  ccsd ~19M. Mechanism: reps with identical member (perm, coeff-ratio)
+  signatures emit one pre-sum S = sum of rep evals; each orbit element
+  rides S via a free permute. Priced exactly in the ILP via cluster
+  variables w_C <= z_t. Includes identity-member coeff folding.
+  Verified: full battery green (trials/20261104-192133.jsonl).
 
 ## Open
 
@@ -38,8 +48,16 @@ landed classes.
 - **C-010 partial-keep families with perm members** — currently only
   identity members join; the permute-based generalization needs the
   keep-set bookkeeping done canonically (not position ids).
-- **C-011 legal-space CCSD residual** — no-sym 22.69G vs gristmill
-  21.42G; decomposition unknown (could be C-008/C-009 or unseen).
+- **C-013 honest-optimum residuals (the real gaps, post-B-007)** — with
+  exact pricing the ILP optima sit ABOVE gristmill: ccd 16.895G vs
+  16.626G (+1.6%), ccsd 23.630G vs 21.422G (+10.3%), adc2 == gristmill
+  (tie). By the space-completeness clause these are missing structural
+  classes; the old relaxed numbers (0.878/0.766) were underpriced
+  relaxations and are retracted. Mechanism unknown; next: structural
+  diff of gristmill's ccd/ccsd candidates vs our optima.
+- **C-014 adc2 tie-break** — adc2's honest optimum == gristmill exactly;
+  the goal needs strictly below, so a class gristmill does not exploit
+  is required (C-008/C-009 candidates, or family-level sum-orbits).
 
 ## Anti-classes (looked, don't pay)
 
