@@ -103,3 +103,20 @@ Complexity: 1373 vars / 1362 cons / 0.4 s build at 63 terms — no blowup.
 Residual gap candidates (unmeasured): rests containing intermediates (rests
 are plain-DP only), sums of sums, term-permutation orbits not yet merged
 into the global arm.
+
+## Global arm v4: rests may contain intermediates => gap closed
+
+Rest covers get their own block choices (sub-ILP structure, still linear).
+CCSD doubles trajectory: 35.47 -> 35.11 (global products) -> 25.20 (+sym)
+-> 23.02 (+families) -> 22.49 (+cross-cofactor sums) -> 21.20G
+(+intermediates in rests) => 0.990x gristmill (21.42G).
+
+Totals (sym+sums, cost-space): mp3 11.28G (0.657x), ccd 16.74G (1.007x),
+ccsd 21.45G (1.001x), adc2 681.7M (0.992x). At or below gristmill everywhere.
+
+Sanity control: no-sym (fully legal) CCSD doubles = 27.16G — gristmill
+(21.42G) beats even our sym-relaxed space without it, so the remaining
+structure was genuine, not a sign artifact. Sign-correct sym emission still
+owed.
+
+Complexity: max 1872 vars / 2375 cons / 0.5 s build at 63 terms.
