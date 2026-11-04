@@ -581,6 +581,29 @@ def sum_group_candidates(terms, term_entries, partial_keep=True,
     return {key: ctx for key, ctx in groups.items() if len(ctx) >= 2}
 
 
+def orbit_signature(terms, members, perms, tsigns):
+    """Orbit signature of one term group: (c_eff, sig) where c_eff is the
+    rep coeff with identity-perm members folded in, and sig = sorted tuple
+    of (perm tuple, ratio) for non-identity members, ratio = member's
+    needed coeff / c_eff. Two groups with equal sig can share one pre-sum
+    whose orbit rides it (C-012); a family whose reps all share one sig
+    can be ridden as a whole (C-016)."""
+    rep = members[0]
+    c_eff = terms[rep]["coeff"]
+    nonid = []
+    for t in members[1:]:
+        pi = perms[t]
+        if all(p == q for p, q in enumerate(pi)):
+            c_eff += terms[t]["coeff"] * tsigns[t] * tsigns[rep]
+        else:
+            nonid.append((tuple(pi),
+                          terms[t]["coeff"] * tsigns[t] * tsigns[rep]))
+    if c_eff == 0:
+        return c_eff, None   # degenerate (rep cancels); never cluster
+    sig = tuple(sorted((pi, rho / c_eff) for pi, rho in nonid))
+    return c_eff, sig
+
+
 def sum_orbit_clusters(terms, groups, perms, tsigns):
     """C-012: cluster reps whose non-identity member (perm, coeff-ratio)
     signatures are identical, so one pre-sum serves the whole orbit:
@@ -592,24 +615,36 @@ def sum_orbit_clusters(terms, groups, perms, tsigns):
     sig_map = {}
     for _, members in groups:
         rep = members[0]
-        crep = terms[rep]["coeff"]
-        nonid = [(perms[t],
-                  terms[t]["coeff"] * tsigns[t] * tsigns[rep] / crep)
-                 for t in members[1:]]
-        if not nonid:
+        _c_eff, sig = orbit_signature(terms, members, perms, tsigns)
+        if not sig:
             continue
-        if any(all(p == q for p, q in enumerate(pi)) for pi, _ in nonid):
-            continue   # mixed identity/non-identity group: skip
-        sig = tuple((tuple(pi), rho) for pi, rho in nonid)
         sig_map.setdefault(sig, []).append(rep)
     clusters = []
     used = set()
     for sig, cl in sig_map.items():
         cl = [r0 for r0 in cl if r0 not in used]
         if len(cl) >= 2:
-            clusters.append((cl, [tuple(p) for p, _ in sig],
+            clusters.append((cl, [p for p, _ in sig],
                              [rho for _, rho in sig]))
             used.update(cl)
+    return clusters
+
+
+def orbit_clusters(items):
+    """items: [(key, sig)]. Returns [([keys], sig)]: disjoint clusters of
+    size >= 2 sharing one orbit signature (first-signature-wins in item
+    order). Used identically by the ILP pricing and the emitter."""
+    by_sig = {}
+    for key, sig in items:
+        if sig:
+            by_sig.setdefault(sig, []).append(key)
+    clusters = []
+    used = set()
+    for sig, ks in by_sig.items():
+        ks = [k for k in ks if k not in used]
+        if len(ks) >= 2:
+            clusters.append((ks, sig))
+            used.update(ks)
     return clusters
 
 
@@ -649,14 +684,12 @@ def solve_problem(problem, ext, time_limit=300, sums=True, group=True,
                         "rep_base": base})
     rep_meta = {}
     rep_pout = {}
-    clusters = []
+    rep_orbit = {}
     for pod in per_out:
         base = pod["rep_base"]
         p_out = 1
         for p in range(pod["rank"]):
             p_out *= ext[pod["terms"][0]["dom"][p]]
-        reps_sorted = sorted(m[0] for _, m in pod["groups"])
-        pos = {r0: i for i, r0 in enumerate(reps_sorted)}
         for k, (_, members) in enumerate(pod["groups"]):
             rep = members[0]
             rep_meta[base + k] = {
@@ -664,13 +697,11 @@ def solve_problem(problem, ext, time_limit=300, sums=True, group=True,
                 "rank": pod["rank"],
             }
             rep_pout[base + k] = (pod["ov"], p_out)
-        for cl, clperms, _rho in sum_orbit_clusters(
-                pod["terms"], pod["groups"], pod["perms"], pod["tsigns"]):
-            saving = (len(cl) - 1) * len(clperms) * p_out
-            clusters.append(([base + pos[r0] for r0 in cl], saving))
+            rep_orbit[base + k] = orbit_signature(
+                pod["terms"], members, pod["perms"], pod["tsigns"])
     res = solve_global(all_terms, ext, time_limit, sums,
                        partial_keep=partial_keep, rep_meta=rep_meta,
-                       rep_pout=rep_pout, clusters=clusters)
+                       rep_pout=rep_pout, rep_orbit=rep_orbit)
     if res[0] is None:
         return None
     (obj, sol, U, stats), _ = res
@@ -681,7 +712,7 @@ def solve_problem(problem, ext, time_limit=300, sums=True, group=True,
 
 def solve_global(terms, ext, time_limit=300, sums=True,
                  partial_keep=True, rep_meta=None, rep_pout=None,
-                 clusters=()):
+                 rep_orbit=None):
     """Exact multi-level sharing ILP for one definition, plus bounded
     sum-intermediate candidates (factor-out groups over rest families).
     Returns (obj, stats) — cost only, no emission."""
@@ -733,14 +764,51 @@ def solve_global(terms, ext, time_limit=300, sums=True,
     # families gamma=(gsig, sigma) with sigma=(cf_rest, out_g); sums S_sigma
     # are shared ACROSS families: s_sigma pure-linkage vars, h_gamma combine
     # vars, r_{gamma,t} per-member rest+add vars.
+    # S-sum/combine and final-lincomb costs are PER OUTPUT: a family
+    # spanning outputs is emitted once per owning output (B-007).
+    rep_owner = {tt: rep_pout[tt][0] for tt in rep_pout} if rep_pout \
+        else {}
+    fam_ctx_raw = (sum_group_candidates(terms, term_entries,
+                                        partial_keep=partial_keep)
+                   if sums else {})
+    # split each family's context into orbit-signature classes: a class is
+    # internally orbit-consistent (C-016), so splitting never loses the
+    # orbit ride; members of other classes keep their own variants
+    fam_ctx = {}
+    for key, ctx in fam_ctx_raw.items():
+        if not rep_orbit:
+            fam_ctx[key] = ctx
+            continue
+        by_sign = defaultdict(list)
+        for e in ctx:
+            by_sign[rep_orbit[e[0]][1]].append(e)
+        if len(by_sign) == 1:
+            fam_ctx[key] = ctx
+        else:
+            for ci2, (_sig, es) in enumerate(
+                    sorted(by_sign.items(), key=lambda kv: str(kv[0]))):
+                if len(es) >= 2:
+                    fam_ctx[key + (ci2,)] = es
+
+    # C-016: a family is orbit-consistent if all its covered reps share
+    # one orbit signature; then the family result is emitted once and the
+    # whole perm orbit rides it via free permutes (no standalone member
+    # evals, no S-space bookkeeping for perm members).
+    fam_sig = {}
+    for gamma, ctx in fam_ctx.items():
+        if rep_orbit:
+            sigs = {rep_orbit[tt][1] for tt, _, _, _ in ctx}
+            if len(sigs) == 1:
+                fam_sig[gamma] = next(iter(sigs))
+                continue
+        fam_sig[gamma] = None
+
     fams = {}        # gamma -> [t]
     fam_g = {}       # gamma -> gsig
     fam_sigma = {}   # gamma -> sigma
     if sums:
-        for key, ctx in sum_group_candidates(terms, term_entries,
-                                             partial_keep=partial_keep
-                                             ).items():
-            gsig, cf_rest, out_g = key
+        for key, ctx in fam_ctx.items():
+            gsig, cf_rest, out_g = key[:3]
             fams[key] = [t for t, _, _, _ in ctx]
             fam_g[key] = gsig
             fam_sigma[key] = (cf_rest, out_g)
@@ -748,19 +816,13 @@ def solve_global(terms, ext, time_limit=300, sums=True,
 
     # precompute per-(family, member) rest cost and per-sigma add cost
     rcost_rt = {}    # (gamma, t) -> dp(rest) + one add
-    # S-sum/combine and final-lincomb costs are PER OUTPUT: a family
-    # spanning outputs is emitted once per owning output (B-007).
-    rep_owner = {tt: rep_pout[tt][0] for tt in rep_pout} if rep_pout \
-        else {}
     comb_cost = {}   # gamma -> combine + S-add + standalone-member cost
-    fam_ctx = (sum_group_candidates(terms, term_entries,
-                                    partial_keep=partial_keep)
-               if sums else {})
+
     # rests may themselves use materialized product intermediates: each
     # (family, member) gets rest-cover choices, exactly like terms
     rchoices = {}   # (gamma, t) -> [(cover, cost)]
     for gamma, ctx in fam_ctx.items():
-        gsig, cf_rest, out_g = gamma
+        gsig, cf_rest, out_g = gamma[:3]
         _, cfree, cdom = canon_record(gsig)
         for (tt, idxs, _, _) in ctx:
             term = terms[tt]
@@ -817,22 +879,52 @@ def solve_global(terms, ext, time_limit=300, sums=True,
                         if all(p == q for p, q in enumerate(pi)))
             comb_cost[gamma] += ((2 if cf_rest else 1) * pcomb
                                  + max(0, n_memb - 1) * p_add)
-        # non-identity perm members of covered reps are emitted separately
-        # (plain full evaluation); charge them here
+        # non-identity perm members of covered reps are emitted
+        # separately (plain full evaluation) UNLESS the family is
+        # orbit-consistent (C-016: they ride the family result for free)
         extra = 0
-        for tt, _, _, _ in ctx:
-            meta = (rep_meta or {}).get(tt)
-            if not meta:
-                continue
-            for _lt, pi in meta["members"][1:]:
-                if not all(p == q for p, q in enumerate(pi)):
-                    term = terms[tt]
-                    cst, _, _ = dp_tree([list(ls) for _, ls in
-                                         term["factors"]],
-                                        list(range(term["rank"])),
-                                        term["dom"], ext)
-                    extra += cst
+        if fam_sig.get(gamma) is None:
+            for tt, _, _, _ in ctx:
+                meta = (rep_meta or {}).get(tt)
+                if not meta:
+                    continue
+                for _lt, pi in meta["members"][1:]:
+                    if not all(p == q for p, q in enumerate(pi)):
+                        term = terms[tt]
+                        cst, _, _ = dp_tree([list(ls) for _, ls in
+                                             term["factors"]],
+                                            list(range(term["rank"])),
+                                            term["dom"], ext)
+                        extra += cst
         comb_cost[gamma] += extra
+
+    # C-012/C-016 sum-orbit clusters over final-lincomb items: ungrouped
+    # reps (z-covered) and orbit-consistent family results, clustered per
+    # output by identical orbit signature. A cluster emits one pre-sum
+    # that the whole orbit rides, saving (k-1)*m adds of the output size.
+    clusters = []   # (items, saving); items = ("z", rep) | ("h", gamma)
+    if rep_orbit and rep_pout:
+        p_out_of = {ov: po for tt, (ov, po) in rep_pout.items()}
+        items_by_out = defaultdict(list)
+        for t in range(len(terms)):
+            sig = rep_orbit.get(t, (None, None))[1]
+            if sig:
+                items_by_out[rep_pout[t][0]].append(("z", t, sig))
+        for gamma, ctx in fam_ctx.items():
+            sig = fam_sig.get(gamma)
+            if sig:
+                ovs = []
+                for tt, _, _, _ in ctx:
+                    ov = rep_pout[tt][0]
+                    if ov not in ovs:
+                        ovs.append(ov)
+                for ov in ovs:
+                    items_by_out[ov].append(("h", gamma, sig))
+        for ov, items in items_by_out.items():
+            for ks, sig in orbit_clusters(
+                    [((it[0], it[1]), it[2]) for it in items]):
+                saving = (len(ks) - 1) * len(sig) * p_out_of[ov]
+                clusters.append((ks, saving))
 
     # ---- ILP
     x_idx = {s: i for i, s in enumerate(cand)}
@@ -882,27 +974,39 @@ def solve_global(terms, ext, time_limit=300, sums=True,
         lc_units = 0
         if rep_pout:
             # a family may span outputs (emitted once per owning output):
-            # sum the per-output lincomb units
-            per_out_units = {}
+            # sum the per-output lincomb units. Orbit-consistent families
+            # (C-016) emit one arg plus one permuted arg per orbit element;
+            # others emit one standalone arg per non-identity member.
+            fsig = fam_sig.get(g)
+            ovs = []
             for tt, _, _, _ in fam_ctx[g]:
                 ov, po = rep_pout[tt]
-                n_nonid = 0
-                meta = (rep_meta or {}).get(tt)
-                if meta:
-                    n_nonid = sum(
-                        1 for _lt, pi in meta["members"][1:]
-                        if not all(p == q for p, q in enumerate(pi)))
-                per_out_units.setdefault(ov, [po, 0])
-                per_out_units[ov][1] += n_nonid
-            lc_units = sum(po * (1 + nn)     # 1 family arg per output
-                           for po, nn in per_out_units.values())
+                if ov not in ovs:
+                    ovs.append(ov)
+            for ov in ovs:
+                po = rep_pout[[tt for tt, _, _, _ in fam_ctx[g]
+                               if rep_pout[tt][0] == ov][0]][1]
+                if fsig is not None:
+                    n_args = 1 + len(fsig)
+                else:
+                    n_args = 1
+                    for tt, _, _, _ in fam_ctx[g]:
+                        if rep_pout[tt][0] != ov:
+                            continue
+                        meta = (rep_meta or {}).get(tt)
+                        if meta:
+                            n_args += sum(
+                                1 for _lt, pi in meta["members"][1:]
+                                if not all(p == q
+                                           for p, q in enumerate(pi)))
+                lc_units += po * n_args
         c[h0 + j] = comb_cost[g] + lc_units
     for j, (g, t, ci) in enumerate(rvars):
         c[r0 + j] = r_cov[(g, t)][ci][1]
-    # C-012 sum-orbit clusters: if every rep of a cluster is z-covered
-    # (ungrouped), the final lincomb merges the orbit over one pre-sum,
-    # saving (k-1)*(orbit-1) adds of the output size.
-    for ci, (_reps, saving) in enumerate(clusters):
+    # C-012/C-016 sum-orbit clusters: if every item of a cluster is
+    # chosen (reps z-covered, families chosen), the final lincomb merges
+    # the orbit over one pre-sum, saving (k-1)*m adds of the output size.
+    for ci, (_items, saving) in enumerate(clusters):
         c[w0 + ci] = -saving
 
     rows, lb, ub = [], [], []
@@ -958,14 +1062,17 @@ def solve_global(terms, ext, time_limit=300, sums=True,
             row[0, x_idx[g[0]]] = -1.0
             rows.append(row); lb.append(-np.inf); ub.append(0.0)
 
-    # w_C <= z_t (z_t = sum of cover choices for rep t)
-    for ci, (cl_reps, _saving) in enumerate(clusters):
-        for t in cl_reps:
+    # w_C <= (item chosen): z-sum per rep, h per family
+    for ci, (cl_items, _saving) in enumerate(clusters):
+        for kind, idx in cl_items:
             row = lil_matrix((1, n))
             row[0, w0 + ci] = 1.0
-            for j, (zt, _, _) in enumerate(zvars):
-                if zt == t:
-                    row[0, nx + ny + j] = -1.0
+            if kind == "z":
+                for j, (zt, _, _) in enumerate(zvars):
+                    if zt == idx:
+                        row[0, nx + ny + j] = -1.0
+            else:
+                row[0, h0 + h_idx[idx]] = -1.0
             rows.append(row); lb.append(-np.inf); ub.append(0.0)
 
     from scipy.sparse import vstack
@@ -983,6 +1090,7 @@ def solve_global(terms, ext, time_limit=300, sums=True,
     xs = res.x
     sol = {
         "fam_ctx": fam_ctx,
+        "fam_sig": fam_sig,
         "x": {s for i, s in enumerate(cand) if xs[i] > 0.5},
         "y": {ys: cover for j, (ys, cover, _) in enumerate(yvars)
               if xs[nx + j] > 0.5},
@@ -1439,13 +1547,15 @@ def emit_global(solpack, ext):
         base = pod["rep_base"]
 
         contribs = []
+        fam_items = []   # (gamma, ref): orbit-consistent family results
+        fam_sig = sol.get("fam_sig", {})
 
         for gamma in sorted(sol["h"]):
             members = [(t, ci) for (g2, t, ci) in sol["r"]
                        if g2 == gamma and base <= t < base + len(reps)]
             if not members:
                 continue
-            gsig, cf_rest, out_g = gamma
+            gsig, cf_rest, out_g = gamma[:3]
             _, g_cfree, g_cdom = canon_record(gsig)
             keep_out = [p for p in range(r) if p not in out_g]
             s_order = [S_BASE + c for c in cf_rest] + keep_out
@@ -1530,10 +1640,18 @@ def emit_global(solpack, ext):
                 "code": {"inputs": [gin, s_order], "output": list(range(r)),
                          "domains": step_dom},
                 "args": [gref, {"Value": vid}]}})
-            contribs.append(({"Value": vid2}, Fraction(1)))
+            if fam_sig.get(gamma):
+                # C-016: orbit-consistent — the whole perm orbit rides
+                # the family result; members are NOT emitted standalone
+                fam_items.append((gamma, {"Value": vid2}))
+            else:
+                contribs.append(({"Value": vid2}, Fraction(1)))
 
         # non-identity members of grouped reps: own plain evaluations
+        # (skipped for orbit-consistent families, whose orbit rides free)
         for (g2, tg, ci) in sorted(sol["r"]):
+            if fam_sig.get(g2):
+                continue
             if not (base <= tg < base + len(reps)):
                 continue
             local_rep = reps[tg - base]
@@ -1592,28 +1710,47 @@ def emit_global(solpack, ext):
                     nonid.append((pi, terms[t]["coeff"] * sgn * bs))
             return ref, c_eff * bs, nonid
 
+        # C-012/C-016: final-lincomb items = ungrouped rep evals +
+        # orbit-consistent family results, clustered by orbit signature.
+        # A fully-present cluster emits one pre-sum that the orbit rides.
+        gpos = {r0: base + k for k, r0 in enumerate(reps)}
+        items = []       # (key, ref, base_coeff, sig)
+        for local_rep in sorted(rep_ref):
+            ref, c_eff, _nonid = rep_parts(local_rep)
+            _, sig = orbit_signature(terms, members_of[local_rep], perms,
+                                     tsigns)
+            items.append((("z", gpos[local_rep]), ref, c_eff, sig))
+        for gamma, fref in fam_items:
+            items.append((("h", gamma), fref, Fraction(1),
+                          fam_sig[gamma]))
+        # candidate-item universe for this output (pricing parity): all
+        # reps with a signature + all consistent families touching it
+        cand_items = []
+        for local_rep in reps:
+            _, sig = orbit_signature(terms, members_of[local_rep], perms,
+                                     tsigns)
+            cand_items.append((("z", gpos[local_rep]), sig))
+        for gamma, ctx in fam_ctx.items():
+            if fam_sig.get(gamma) and any(
+                    base <= e[0] < base + len(reps) for e in ctx):
+                cand_items.append((("h", gamma), fam_sig[gamma]))
+        present = {k for k, _, _, _ in items}
+        item_by_key = {k: (ref, bc, sig) for k, ref, bc, sig in items}
         clustered = set()
-        for cl, clperms, rhos in sum_orbit_clusters(terms, groups, perms,
-                                                    tsigns):
-            if any(r0 not in rep_ref for r0 in cl):
-                continue   # partly family-covered: no merge (pricing agrees)
-            sum_args, sum_coeffs = [], []
-            for r0 in cl:
-                ref, c_eff, _ = rep_parts(r0)
-                sum_args.append(ref)
-                sum_coeffs.append(c_eff)
-                clustered.add(r0)
+        for ks, sig in orbit_clusters(cand_items):
+            if not all(k in present for k in ks):
+                continue   # partly unchosen: no merge (pricing agrees)
             vid = len(values)
             values.append({"LinComb": {
-                "coeff": [[cf.numerator, cf.denominator]
-                          for cf in sum_coeffs],
-                "code": {"inputs": [list(range(r))] * len(sum_args),
+                "coeff": [[item_by_key[k][1].numerator,
+                           item_by_key[k][1].denominator] for k in ks],
+                "code": {"inputs": [list(range(r))] * len(ks),
                          "output": list(range(r)),
                          "domains": {str(l): terms[0]["dom"][l]
                                      for l in range(r)}},
-                "args": sum_args}})
+                "args": [item_by_key[k][0] for k in ks]}})
             contribs.append(({"Value": vid}, Fraction(1)))
-            for pi, rho in zip(clperms, rhos):
+            for pi, rho in sig:
                 pi_inv = [pi.index(q) for q in range(r)]
                 outdom = {str(l): terms[0]["dom"][l] for l in range(r)}
                 vid2 = len(values)
@@ -1624,14 +1761,30 @@ def emit_global(solpack, ext):
                              "domains": outdom},
                     "args": [{"Value": vid}]}})
                 contribs.append(({"Value": vid2}, rho))
+            clustered.update(ks)
 
-        for local_rep in sorted(rep_ref):
-            if local_rep in clustered:
+        for key, ref, base_cf, sig in items:
+            if key in clustered:
                 continue
-            ref, c_eff, nonid = rep_parts(local_rep)
-            if c_eff:
-                contribs.append((ref, c_eff))
-            for pi, cf in nonid:
+            if base_cf:
+                contribs.append((ref, base_cf))
+            if sig is None and key[0] == "z":
+                # degenerate orbit signature: emit members directly
+                _ref, _ce, nonid = rep_parts(
+                    [r0 for r0 in rep_ref if gpos[r0] == key[1]][0])
+                for pi, cf in nonid:
+                    pi_inv = [pi.index(q) for q in range(r)]
+                    outdom = {str(l): terms[0]["dom"][l] for l in range(r)}
+                    vid = len(values)
+                    values.append({"Einsum": {
+                        "coeff": [1, 1],
+                        "code": {"inputs": [list(range(r))],
+                                 "output": [pi_inv[p] for p in range(r)],
+                                 "domains": outdom},
+                        "args": [ref]}})
+                    contribs.append(({"Value": vid}, cf))
+                continue
+            for pi, rho in (sig or ()):
                 pi_inv = [pi.index(q) for q in range(r)]
                 outdom = {str(l): terms[0]["dom"][l] for l in range(r)}
                 vid = len(values)
@@ -1641,7 +1794,7 @@ def emit_global(solpack, ext):
                              "output": [pi_inv[p] for p in range(r)],
                              "domains": outdom},
                     "args": [ref]}})
-                contribs.append(({"Value": vid}, cf))
+                contribs.append(({"Value": vid}, rho * base_cf))
 
         outdom = {str(l): terms[0]["dom"][l] for l in range(r)}
         vid = len(values)

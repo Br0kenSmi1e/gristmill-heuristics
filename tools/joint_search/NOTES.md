@@ -296,3 +296,27 @@ budget gate restored).
 Verified scoreboard (trials/20261104-194244.jsonl): mp3 0.6564 PASS |
 ccd 0.99994 PASS (strict) | adc2 1.000000 (tie, C-014) | ccsd 1.0887
 (C-013 residual 1.87G, under analysis).
+
+## C-016 orbit-consistent families: ccsd beats gristmill (milestone)
+
+The ccsd residual was NOT a missing node class either — it was a
+restriction on family usage: families whose reps have non-identity perm
+members were charged full standalone evals per member (post-B-006), so
+the ILP rejected the big T3-cofactor families. Mechanism (verified by
+lstsq term decomposition of gristmill's candidate): gristmill's
+ccsd doubles covers 20 terms with ONE combine (T3 x (V58+V59)) plus three
+free permutes — i.e. the whole orbit rides the family result. This is
+sound whenever every covered rep shares one orbit signature
+{C-016 consistency condition}. Implementation: (1) orbit_signature()
+per group (identity members fold into c_eff; non-id members give
+(perm, ratio) pairs); (2) family candidates are SPLIT into
+signature classes so one inconsistent rep no longer poisons a family;
+(3) consistent families emit one result + free permutes, and join the
+C-012 cluster pre-sums; (4) priced exactly (no standalone `extra`,
+lincomb units = 1 + |orbit|, cluster vars w_C <= h_gamma).
+
+Verified scoreboard (trials/20261104-201217.jsonl), all oracle-green:
+mp3 0.6564 PASS | ccd 0.9919 PASS | ccsd 0.9348 PASS | adc2 1.0000 tie.
+C-013 closed (its "missing class" was C-016). Remaining goal item:
+adc2's exact tie (C-014) — the space optimum == gristmill there, so a
+class gristmill lacks is required.
