@@ -152,16 +152,14 @@ study (archive/RESEARCH-v1.md, tag `hl-study-final`).
   1162.1 ms measured; model correctly ranks gristmill better), but its
   selector reproduction timed out after 240 s / three steps, so an identical
   path mechanism there is not yet claimed.
-- v2-era state (exam-cd921bd, debug binary pinned): under model v2 + the
-  F-018 cap, five of six regenerated candidates are baseline fallbacks, so
-  their Axis-2 cells are same-program noise (+-9%: ccd/ccsd/lambda/eom/adc2
-  ratios 0.949-1.089 around 1.0). The old losses (adc2 0.626x, eom 0.794x,
-  lambda t16 0.580x) are gone BY CONSTRUCTION — the compiler no longer ships
-  them — but the same fact means the v2-priced greedy selector finds nothing
-  better than baseline on ccd/ccsd/adc2/eom/lambda. mp3 is the exception:
-  2 accepted steps, FLOPs 0.969x BELOW baseline, measured 1.194x t1 /
-  1.139x t16. Open question reframed: is v2-greedy search quality (not the
-  v1-era acceptance hole) the binding constraint on Axis 2?
+- v3-era state (exam-774420a, RELEASE binary): under model v3 the selector
+  falls back to the baseline on ALL SIX runnable problems (mp3's v2-era
+  win does not survive v3 pricing — consistent with its F-033 release
+  measurement of 1.02-1.04x). The compiler currently emits the verified
+  baseline everywhere: Axis-2 parity by construction, and the open
+  question is unchanged but sharper — nothing in the reachable space beats
+  baseline under the best model we have, and the model's program-level
+  ranking is now 0.89-0.96 spearman.
 - exposing fixture: `adc2_selected.json` vs same-equation
   `adc2_gristmill.json`; exact selector reproduction is
   `harness select benches/chemistry/adc2.json --sizes 0=16,1=64 --threads 1`.
@@ -293,19 +291,21 @@ study (archive/RESEARCH-v1.md, tag `hl-study-final`).
   with per-process tree rolls moving real wall time (selected is stable
   at ~52 ms). First direct timing signature of this defect.
 
-## F-036 Migrate calibration and exams to the release binary profile [OPEN]
+## F-036 Migrate calibration and exams to the release binary profile [CLOSED — v3 is release-regime; exam-774420a ran on release]
 - symptom (F-033): all calibration rates (calibrate-v1) and both protected
   exams were measured with the debug-profile harness; release A/B shows
   debug does not preserve ratios for the one genuine non-fallback cell
   (mp3: 1.19x debug t1 -> 1.02-1.04x release t1; baseline gains more from
   release than the selected schedule). SPEC measures the compiler's
   artifact; a debug harness is not it.
-- plan: (1) release-profile `harness calibrate` -> calibrate-v2 rates file;
-  (2) cost model rates refresh (a model change -> fires a milestone); (3)
-  re-run the protected exam on release. Sequenced AFTER I-007 (I-007 is
-  model-priced and internally consistent under debug-calibrated rates).
-- constraint: debug-era absolute ms remain valid within the debug regime;
-  cross-profile comparisons of absolute times are forbidden.
+- resolution: done. calibrate-v2 (release profile, median of 3 clean runs)
+  is the rates basis for model v3; run_exam.py pins the release binary;
+  exam-774420a ran end-to-end on release (Axis 0: 14/14; Axis 1: 6/7 green
+  by fallback identity + ccsd_t RED 40.6x recorded; Axis 2: all-fallback
+  so all cells are same-program — residual divergences up to 1.48x in
+  late cells ran under climbing load 3-6.3 and F-035 tree rolls; no
+  win/loss claims). Debug-era numbers remain valid only in the debug
+  regime.
 
 ## Critic challenges (milestone after I-005 retirement; filed by fresh-context critic, milestone stays OPEN until each is fixed or rebutted with evidence)
 
@@ -572,7 +572,7 @@ study (archive/RESEARCH-v1.md, tag `hl-study-final`).
   that the incumbent is Axis-1 red and no displacement tournament occurs
   until that gate is restored; no challenger is silently adopted or retired.
 
-## F-016 Held-out model error is untracked; the model that killed I-005 mispredicts ADC2's gap by ~70% [OPEN — response recorded, calibration owned by M1]
+## F-016 Held-out model error is untracked; the model that killed I-005 mispredicts ADC2's gap by ~70% [CLOSED — v3 priced the gap classes; milestone eval 1.44x vs 1.60-1.92x measured]
 - symptom: trials/f007-per-op-diff.jsonl shows ADC2 predicted gap
   119.9/105.1 = 1.14x vs measured 112.7/58.7 = 1.92x. F-004 covers only
   the ccsd_t high-rank slow path; no F-entry records that the current
@@ -587,18 +587,15 @@ study (archive/RESEARCH-v1.md, tag `hl-study-final`).
   margin: measured CCD/CCSD Axis-1 failure forced retirement.
   No held-out calibration or parameter tuning is permitted; evaluate model v2
   on this case only at a milestone.
-- model v2 status (0b44e61): the F-004 reduction-class hole is closed and
-  CI-gated (model-ci, 2x, exceptions documented). Newly surfaced PRE-EXISTING
-  gap classes, measured on the train corpus at (8,40) t1 (diagnostic-grade,
-  trials/model-v2.jsonl): (a) k-heavy low-rank-output contractions
-  (ccsd_gristmill op#19 "ab,bacd->cd") achieve 0.26 GF/s — 500x under-
-  predicted; (b) single-k rank-4-output contractions (op#23 "ab,cdae->bcde")
-  achieve 0.9 GF/s — 26x under-predicted; (c) rank-6 lincomb ops carry
-  ~0.3-0.5 ms fixed overhead the dispatch floor misses (10-17x at tiny size,
-  ~5% of ccsd_t_struct time). Per-op spearman on ccsd_gristmill is 0.37
-  (n=115, dispatch-floor-dominated); the prequel's rho ~0.93 was measured on
-  different fixtures — not asserted comparable. Next M1 work: extend the
-  calibration grid with classes (a)-(c), then price them.
+- v3 closure: the F-016 gap classes are priced in model v3 (k-dominant
+  permute-bound branch, cache-split slow GEMM, lincomb rank>=5 floor),
+  CI-gated at 2x on the 88-record release grid (7 documented exceptions,
+  mostly hybrid-CPU t16 variance). Program-level validation on release
+  references: totals within 1.12-1.58x, spearman 0.89-0.96. Milestone
+  held-out eval (trials/model-v3.jsonl): v3 predicts the v1-era ADC2 gap
+  at 1.44x vs measured 1.60-1.92x (v1 1.14x, v2 1.135x) — largely closed.
+  Residual risk on record: t16-unstable classes (singlek, bin_r6_out1)
+  carry exceptions; selector t16 decisions near them are provisional.
 
 ## F-017 CCSD(T) exam blocked by harness 6 GB limit below the 14 GB regime [OPEN]
 - symptom: the a8bf146 protected exam reached ccsd_t gristmill t1 and stopped

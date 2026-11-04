@@ -87,8 +87,11 @@ PROTOCOL.md. What is broken: FAILURES.md. What we might try: IDEAS.md.
 
 ## Next investment
 
-Model v3 landed on the release regime (33a4e83). The v3 rates change
-selector pricing -> candidates regenerate -> a milestone exam on RELEASE
-is due (run_exam.py must flip to the release binary). Then: F-016's v3
-held-out ADC2 evaluation at that milestone; F-005/I-006 enumeration
-budget; F-035 execution-tree pinning decision; F-017 memory wall.
+Model v3 landed on the release regime (33a4e83) and exam-774420a ran on
+release: the selector emits the verified baseline on ALL six runnable
+problems (Axis-2 parity by construction; mp3's v2-era win does not
+survive v3 pricing, consistent with its release measurement). The
+milestone is recorded; a fresh-context critic is due (user-launched).
+Open queue: F-005/I-006 (enumeration budget — the only remaining route
+to spaces bigger than baseline on adc2-class problems), F-035
+(execution-tree pinning), F-017 (memory wall), and then M2 codegen.
