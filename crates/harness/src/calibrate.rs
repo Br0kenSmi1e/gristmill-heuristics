@@ -188,7 +188,7 @@ const CASES: &[Case] = &[
         name: "kheavy_r2out",
         einsum: "ab,bcad->cd",
         dims: &[('a', V), ('b', V), ('c', V), ('d', V)],
-        scales: &[(8, 16), (16, 32), (24, 48)],
+        scales: &[(8, 16), (16, 32), (20, 40), (24, 48)],
         flop_model: FlopModel::Contraction,
     },
     Case {
@@ -196,7 +196,7 @@ const CASES: &[Case] = &[
         name: "singlek_r4out",
         einsum: "ab,cdae->bcde",
         dims: &[('a', V), ('b', O), ('c', V), ('d', V), ('e', V)],
-        scales: &[(8, 16), (16, 32)],
+        scales: &[(8, 16), (12, 24), (16, 32), (20, 40)],
         flop_model: FlopModel::Contraction,
     },
     Case {
