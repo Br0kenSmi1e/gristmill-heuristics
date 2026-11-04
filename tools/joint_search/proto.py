@@ -18,6 +18,7 @@ Subcommands:
 
 import json
 import sys
+import time as time_mod
 from collections import defaultdict
 from fractions import Fraction
 from functools import lru_cache
@@ -367,6 +368,213 @@ def disjoint_subsets(ent):
             if all(not (e[0] & x[0]) for x in s):
                 out.append(s + (e,))
     return out
+
+
+# ------------------------------------------------- global multi-level ILP
+#
+# Universe lemma: every intermediate in any valid schedule is a factor subset
+# of some term (up to wiring isomorphism), with a free-label set determined by
+# a use context (a term, or another intermediate's formation). The universe U
+# is the closure of the term-level subsets under that context rule. The ILP
+# below is exact over the full product-sharing DAG space: x_s materializes a
+# sig, y_{M,S} chooses its formation (disjoint cover by materialized blocks +
+# singleton leftovers, DP-priced), z_{t,S} likewise for terms.
+
+def canon_record(sig):
+    """Unpack a canon_sig into (cfactors, cfree, cdom)."""
+    attrs, body = sig
+    cfree = tuple(i for i, a in enumerate(attrs) if a[1])
+    cdom = {i: a[0] for i, a in enumerate(attrs)}
+    return list(body), cfree, cdom
+
+
+def subset_sigs(cfactors, cdom, cfree):
+    """All proper factor subsets (size>=2) of a canonical record, each with
+    its context free set, canonicalized. Yields (frozenset idxs, sig,
+    free_in_context) — the last in the record's own label namespace."""
+    n = len(cfactors)
+    for size in range(2, n):
+        for idxs in combinations(range(n), size):
+            idxs = frozenset(idxs)
+            facs = [cfactors[i] for i in idxs]
+            labs = {l for _, ls in facs for l in ls}
+            outside = set(cfree)
+            for j, (_, ls) in enumerate(cfactors):
+                if j not in idxs:
+                    outside |= set(ls)
+            free = labs & outside
+            yield idxs, canon_sig(facs, cdom, free), free
+
+
+def build_universe(terms):
+    """Closure of term-level factor subsets under context freeness.
+    Returns (U, term_blocks, term_entries) with U: sig -> record;
+    term_blocks[t] = [(frozenset idxs, sig)] all subset sigs of term t;
+    term_entries[t] = [(frozenset idxs, sig, free, ren)] with maps."""
+    U = {}
+    work = []
+    term_blocks = []
+    term_entries = []
+    for term in terms:
+        k = len(term["factors"])
+        blocks = []
+        entries = []
+        for size in range(2, k + 1):
+            for idxs in combinations(range(k), size):
+                idxs = frozenset(idxs)
+                facs = [term["factors"][i] for i in idxs]
+                labs = {l for _, ls in facs for l in ls}
+                outside = set(range(term["rank"]))
+                for j, (_, ls) in enumerate(term["factors"]):
+                    if j not in idxs:
+                        outside |= set(ls)
+                free = labs & outside
+                sig, ren = canon_sig(facs, term["dom"], free, want_map=True)
+                blocks.append((idxs, sig))
+                entries.append((idxs, sig, free, ren))
+                if sig not in U:
+                    work.append(sig)
+        term_blocks.append(blocks)
+        term_entries.append(entries)
+    while work:
+        sig = work.pop()
+        if sig in U:
+            continue
+        cfactors, cfree, cdom = canon_record(sig)
+        U[sig] = {"cfactors": cfactors, "cfree": cfree, "cdom": cdom}
+        for _, subsig, _ in subset_sigs(cfactors, cdom, cfree):
+            if subsig not in U:
+                work.append(subsig)
+    return U, term_blocks, term_entries
+
+
+def cover_choices(atom_sets, block_list, out_labels, dom, ext):
+    """All ways to cover the term/formation by disjoint candidate blocks;
+    returns [(frozenset-of-block-positions, dp_cost)]."""
+    choices = []
+    n = len(atom_sets)
+    for cover in disjoint_subsets(block_list):
+        used = frozenset().union(*(b[0] for b in cover)) if cover \
+            else frozenset()
+        atoms = [sorted(b[2]) for b in cover]
+        for i in range(n):
+            if i not in used:
+                atoms.append(sorted(atom_sets[i]))
+        cst, _, _ = dp_tree(atoms, list(out_labels), dom, ext)
+        choices.append((cover, cst))
+    return choices
+
+
+def solve_global(terms, ext, time_limit=300):
+    """Exact multi-level sharing ILP for one definition. Returns
+    (obj, stats) — cost only, no emission."""
+    t0 = time_mod.time()
+    U, term_blocks, term_entries = build_universe(terms)
+
+    # use-context count: terms containing the sig + sigs containing it as a
+    # proper sub-block
+    nctx = defaultdict(int)
+    for t, blocks in enumerate(term_blocks):
+        for sig in {s for _, s in blocks}:
+            nctx[sig] += 1
+    sub_of = {}
+    for sig, rec in U.items():
+        subs = []
+        for idxs, subsig, subfree in subset_sigs(rec["cfactors"],
+                                                 rec["cdom"], rec["cfree"]):
+            subs.append((idxs, subsig, subfree))
+        sub_of[sig] = subs
+        for _, ss, _ in subs:
+            nctx[ss] += 1
+
+    cand = [s for s in U if nctx[s] >= 2]
+    candset = set(cand)
+
+    # formations per candidate sig
+    forms = {}   # sig -> [(cover, cost)]  cover = tuple of (idxs, subsig)
+    for s in cand:
+        rec = U[s]
+        blocks = [(idxs, ss, free_in_m, None) for idxs, ss, free_in_m in
+                  sub_of[s] if ss in candset]
+        atom_sets = [set(ls) for _, ls in rec["cfactors"]]
+        forms[s] = cover_choices(atom_sets, blocks, rec["cfree"],
+                                 rec["cdom"], ext)
+
+    # term-level choices
+    tchoices = []
+    for t, term in enumerate(terms):
+        blocks = [(idxs, sig, free, ren) for idxs, sig, free, ren in
+                  term_entries[t] if sig in candset]
+        atom_sets = [set(ls) for _, ls in term["factors"]]
+        tchoices.append(cover_choices(atom_sets, blocks,
+                                      list(range(term["rank"])),
+                                      term["dom"], ext))
+
+    # ---- ILP
+    x_idx = {s: i for i, s in enumerate(cand)}
+    yvars = []   # (sig, cover, cost)
+    for s in cand:
+        for cover, cst in forms[s]:
+            yvars.append((s, cover, cst))
+    zvars = []   # (t, cover, cost)
+    for t in range(len(terms)):
+        for cover, cst in tchoices[t]:
+            zvars.append((t, cover, cst))
+
+    nx, ny, nz = len(cand), len(yvars), len(zvars)
+    n = nx + ny + nz
+    c = np.zeros(n)
+    for i, s in enumerate(cand):
+        c[i] = 0.0                      # formation cost charged on y
+    for j, (_, _, cst) in enumerate(yvars):
+        c[nx + j] = cst
+    for j, (_, _, cst) in enumerate(zvars):
+        c[nx + ny + j] = cst
+
+    rows, lb, ub = [], [], []
+    # exactly one formation per materialized sig: sum_S y_{M,S} = x_M
+    for i, s in enumerate(cand):
+        row = lil_matrix((1, n))
+        row[0, i] = 1.0
+        for j, (ys, _, _) in enumerate(yvars):
+            if ys == s:
+                row[0, nx + j] = -1.0
+        rows.append(row); lb.append(0.0); ub.append(0.0)
+    # y_{M,S} <= x_B for B in S
+    for j, (ys, cover, _) in enumerate(yvars):
+        for b in cover:
+            row = lil_matrix((1, n))
+            row[0, nx + j] = 1.0
+            row[0, x_idx[b[1]]] = -1.0
+            rows.append(row); lb.append(-np.inf); ub.append(0.0)
+    # one cover per term
+    for t in range(len(terms)):
+        row = lil_matrix((1, n))
+        for j, (zt, _, _) in enumerate(zvars):
+            if zt == t:
+                row[0, nx + ny + j] = 1.0
+        rows.append(row); lb.append(1.0); ub.append(1.0)
+    # z <= x
+    for j, (zt, cover, _) in enumerate(zvars):
+        for b in cover:
+            row = lil_matrix((1, n))
+            row[0, nx + ny + j] = 1.0
+            row[0, x_idx[b[1]]] = -1.0
+            rows.append(row); lb.append(-np.inf); ub.append(0.0)
+
+    from scipy.sparse import vstack
+    A = vstack(rows).tocsr()
+    t_build = time_mod.time() - t0
+    res = milp(c=c, constraints=LinearConstraint(A, lb, ub),
+               integrality=np.ones(n), bounds=Bounds(np.zeros(n), np.ones(n)),
+               options={"time_limit": time_limit})
+    stats = {"U": len(U), "candidates": len(cand), "vars": n,
+             "constraints": A.shape[0], "build_s": t_build,
+             "solve_s": res.mip_node_count and None, "status": res.status,
+             "mip_gap": getattr(res, "mip_gap", None)}
+    if res.x is None:
+        return None, stats
+    return res.fun, stats
 
 
 # ------------------------------------------------------------------ the ILP
@@ -804,13 +1012,29 @@ def main():
         print(f"emitted {len(prog['values'])} steps -> {out_path}")
         print(f"emitted program priced: {priced} FLOPs "
               f"(log10 = {np.log10(priced):.6f})")
+    elif cmd == "solveg":
+        prob_path, sizes = sys.argv[2], parse_sizes(sys.argv[3])
+        problem = json.load(open(prob_path))
+        if len(sys.argv) > 4 and sys.argv[4] == "sym":
+            global SYMS
+            SYMS = problem["symmetries"]
+        t_start = time_mod.time()
+        for ov in problem["reference"]["outputs"]:
+            terms, r = parse_terms(problem, ov)
+            naive = naive_cost(terms, sizes)
+            out = solve_global(terms, sizes)
+            obj, stats = out
+            print(f"output {ov}: {len(terms)} terms | naive {naive} | "
+                  f"global-ILP {int(obj)} ({naive/obj:.3f}x) | "
+                  f"U={stats['U']} cand={stats['candidates']} "
+                  f"vars={stats['vars']} cons={stats['constraints']} "
+                  f"build={stats['build_s']:.1f}s status={stats['status']}")
+        print(f"total wall: {time_mod.time()-t_start:.1f}s")
+
+
     else:
         print(__doc__)
         sys.exit(1)
-
-
-def sigs_used(subsets):
-    return {e[1] for s in subsets for e in s}
 
 
 def parse_sizes(s):
