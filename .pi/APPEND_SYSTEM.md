@@ -4,7 +4,10 @@ joint-search-proto). Those files are authoritative: they define the
 workflow, the current verified state, and the work queue.
 
 This arm develops a joint ILP+DP selector (a challenger for the
-mainline's contested factorization slot). Work autonomously — pull the
+mainline's contested factorization slot). The terminal goal is stated in
+LOOP.md ("The goal"): on every train problem, an emitted candidate that
+verifies AND strictly beats the same-equation gristmill FLOP count at
+(16,64) — that clause is the space-completeness test. Work autonomously — pull the
 next item from BUGS.md (bugs, currently B-006) or CLASSES.md
 (expressiveness classes), run experiments yourself, commit validated
 work as you go.
