@@ -543,47 +543,56 @@ def solve_global(terms, ext, time_limit=300, sums=True):
                                       list(range(term["rank"])),
                                       term["dom"], ext))
 
-    # ---- sum-intermediate candidates (cofactor families, partial keep)
-    wvars = []   # (key, contexts, cost, gsig_if_shared_product)
+    # ---- sum-intermediate candidates, cross-cofactor sharing:
+    # families gamma=(gsig, sigma) with sigma=(cf_rest, out_g); sums S_sigma
+    # are shared ACROSS families: s_sigma pure-linkage vars, h_gamma combine
+    # vars, r_{gamma,t} per-member rest+add vars.
+    fams = {}        # gamma -> [t]
+    fam_g = {}       # gamma -> gsig
+    fam_sigma = {}   # gamma -> sigma
     if sums:
         for key, ctx in sum_group_candidates(terms, term_entries).items():
             gsig, cf_rest, out_g = key
-            gfac = gsig in candset
-            # per-context rest formation (plain DP) and S-space extents
-            rcost = 0
-            s_doms = None
-            for (tt, idxs) in ctx:
-                term = terms[tt]
-                k = len(term["factors"])
-                rest = [term["factors"][i] for i in range(k)
-                        if i not in idxs]
-                facs = [term["factors"][i] for i in sorted(idxs)]
-                labs_g = {l for _, ls in facs for l in ls}
-                rest_labels = {l for _, ls in rest for l in ls}
-                free_g = labs_g & (rest_labels | set(range(term["rank"])))
-                keep = sorted(free_g & rest_labels) + \
-                    sorted(p for p in range(term["rank"]) if p in rest_labels)
-                cst, _, _ = dp_tree([list(ls) for _, ls in rest], keep,
-                                    term["dom"], ext)
-                rcost += cst
-                if s_doms is None:
-                    s_doms = [term["dom"][l] for l in keep]
-            p_add = 1
-            for d in s_doms:
-                p_add *= ext[d]
-            rcost += (len(ctx) - 1) * p_add
-            # combine g x S -> out: labels = free(g) u out_rest; extents:
-            # cfree domains from the sig, out positions from the term
-            info_cfree = canon_record(gsig)[1]
-            info_cdom = canon_record(gsig)[2]
-            pcomb = 1
-            for cid in info_cfree:
-                pcomb *= ext[info_cdom[cid]]
-            for p in range(terms[0]["rank"]):
-                if p not in out_g:
-                    pcomb *= ext[terms[0]["dom"][p]]
-            rcost += (2 if cf_rest else 1) * pcomb
-            wvars.append((key, ctx, rcost, gsig if gfac else None))
+            fams[key] = [t for t, _ in ctx]
+            fam_g[key] = gsig
+            fam_sigma[key] = (cf_rest, out_g)
+    sigmas = sorted({fam_sigma[g] for g in fams})
+
+    # precompute per-(family, member) rest cost and per-sigma add cost
+    rcost_rt = {}    # (gamma, t) -> dp(rest) + one add
+    comb_cost = {}   # gamma -> combine cost
+    fam_ctx = sum_group_candidates(terms, term_entries)
+    for gamma, ctx in fam_ctx.items():
+        gsig, cf_rest, out_g = gamma
+        _, cfree, cdom = canon_record(gsig)
+        for (tt, idxs) in ctx:
+            term = terms[tt]
+            k = len(term["factors"])
+            rest = [term["factors"][i] for i in range(k) if i not in idxs]
+            rest_labels = {l for _, ls in rest for l in ls}
+            keep = sorted({l for _, ls in
+                           [term["factors"][i] for i in sorted(idxs)]
+                           for l in ls} & rest_labels) + \
+                sorted(p for p in range(term["rank"]) if p in rest_labels)
+            cst, _, _ = dp_tree([list(ls) for _, ls in rest], keep,
+                                term["dom"], ext)
+            rcost_rt[(gamma, tt)] = cst
+        # S add cost: one add per member beyond the first
+        p_add = 1
+        for cid in cf_rest:
+            p_add *= ext[cdom[cid]]
+        for p in range(terms[0]["rank"]):
+            if p not in out_g:
+                p_add *= ext[terms[0]["dom"][p]]
+        add_sigma = p_add
+        # combine cost: labels = cfree u out_rest
+        pcomb = 1
+        for cid in cfree:
+            pcomb *= ext[cdom[cid]]
+        for p in range(terms[0]["rank"]):
+            if p not in out_g:
+                pcomb *= ext[terms[0]["dom"][p]]
+        comb_cost[gamma] = (2 if cf_rest else 1) * pcomb
 
     # ---- ILP
     x_idx = {s: i for i, s in enumerate(cand)}
@@ -595,22 +604,32 @@ def solve_global(terms, ext, time_limit=300, sums=True):
     for t in range(len(terms)):
         for cover, cst in tchoices[t]:
             zvars.append((t, cover, cst))
+    hvars = sorted(fam_ctx)                    # gamma
+    svars = sorted({fam_sigma[g] for g in hvars})
+    rvars = [(g, t) for g in hvars for t, _ in fam_ctx[g]]
 
     nx, ny, nz = len(cand), len(yvars), len(zvars)
-    nw = len(wvars)
-    n = nx + ny + nz + nw
+    nh, ns, nr = len(hvars), len(svars), len(rvars)
+    n = nx + ny + nz + nh + ns + nr
+    h0 = nx + ny + nz
+    s0 = h0 + nh
+    r0 = s0 + ns
+    h_idx = {g: i for i, g in enumerate(hvars)}
+    s_idx = {sg: i for i, sg in enumerate(svars)}
+    r_idx = {rt: i for i, rt in enumerate(rvars)}
+
     c = np.zeros(n)
-    for j, (_, _, cst, _) in enumerate(wvars):
-        c[nx + ny + nz + j] = cst
-    for i, s in enumerate(cand):
-        c[i] = 0.0                      # formation cost charged on y
     for j, (_, _, cst) in enumerate(yvars):
         c[nx + j] = cst
     for j, (_, _, cst) in enumerate(zvars):
         c[nx + ny + j] = cst
+    for j, g in enumerate(hvars):
+        c[h0 + j] = comb_cost[g]
+    for j, (g, t) in enumerate(rvars):
+        c[r0 + j] = rcost_rt[(g, t)]
 
     rows, lb, ub = [], [], []
-    # exactly one formation per materialized sig: sum_S y_{M,S} = x_M
+    # exactly one formation per materialized sig
     for i, s in enumerate(cand):
         row = lil_matrix((1, n))
         row[0, i] = 1.0
@@ -618,36 +637,43 @@ def solve_global(terms, ext, time_limit=300, sums=True):
             if ys == s:
                 row[0, nx + j] = -1.0
         rows.append(row); lb.append(0.0); ub.append(0.0)
-    # y_{M,S} <= x_B for B in S
     for j, (ys, cover, _) in enumerate(yvars):
         for b in cover:
             row = lil_matrix((1, n))
             row[0, nx + j] = 1.0
             row[0, x_idx[b[1]]] = -1.0
             rows.append(row); lb.append(-np.inf); ub.append(0.0)
-    # one cover per term: plain cover OR membership in one sum group
+    # term coverage: plain cover OR one family membership
     for t in range(len(terms)):
         row = lil_matrix((1, n))
         for j, (zt, _, _) in enumerate(zvars):
             if zt == t:
                 row[0, nx + ny + j] = 1.0
-        for j, (_, ctx, _, _) in enumerate(wvars):
-            if any(tt == t for tt, _ in ctx):
-                row[0, nx + ny + nz + j] = 1.0
+        for j, (g, tt) in enumerate(rvars):
+            if tt == t:
+                row[0, r0 + j] = 1.0
         rows.append(row); lb.append(1.0); ub.append(1.0)
-    # w_gamma <= x_g when the cofactor is a shared product intermediate
-    for j, (_, _, _, gs) in enumerate(wvars):
-        if gs is not None:
-            row = lil_matrix((1, n))
-            row[0, nx + ny + nz + j] = 1.0
-            row[0, x_idx[gs]] = -1.0
-            rows.append(row); lb.append(-np.inf); ub.append(0.0)
-    # z <= x
     for j, (zt, cover, _) in enumerate(zvars):
         for b in cover:
             row = lil_matrix((1, n))
             row[0, nx + ny + j] = 1.0
             row[0, x_idx[b[1]]] = -1.0
+            rows.append(row); lb.append(-np.inf); ub.append(0.0)
+    # r <= h, h <= s, h <= x_g
+    for j, (g, t) in enumerate(rvars):
+        row = lil_matrix((1, n))
+        row[0, r0 + j] = 1.0
+        row[0, h0 + h_idx[g]] = -1.0
+        rows.append(row); lb.append(-np.inf); ub.append(0.0)
+    for j, g in enumerate(hvars):
+        row = lil_matrix((1, n))
+        row[0, h0 + j] = 1.0
+        row[0, s0 + s_idx[fam_sigma[g]]] = -1.0
+        rows.append(row); lb.append(-np.inf); ub.append(0.0)
+        if g[0] in candset:
+            row = lil_matrix((1, n))
+            row[0, h0 + j] = 1.0
+            row[0, x_idx[g[0]]] = -1.0
             rows.append(row); lb.append(-np.inf); ub.append(0.0)
 
     from scipy.sparse import vstack
@@ -658,7 +684,7 @@ def solve_global(terms, ext, time_limit=300, sums=True):
                options={"time_limit": time_limit})
     stats = {"U": len(U), "candidates": len(cand), "vars": n,
              "constraints": A.shape[0], "build_s": t_build,
-             "groups": nw, "status": res.status,
+             "families": nh, "sigmas": ns, "status": res.status,
              "mip_gap": getattr(res, "mip_gap", None)}
     if res.x is None:
         return None, stats
