@@ -104,7 +104,24 @@ fixture, fix, regression pointer. CLOSED entries kept for audit.
 - became goal-decisive: adc2's objective already beat gristmill; the
   honest accounting + C-012 closed the emitted gap to exactly 1.000000.
 
-## B-008 ccsd_lambda verify failure (held-out) [OPEN]
+## B-008 ccsd_lambda verify failure (held-out) [CLOSED — with a regression history]
+- RESOLUTION (verified by per-commit re-runs, trials/20261105-*): the failure
+  was the family/S-sum emission bookkeeping for permutation-group members
+  (B-006 class). Fixed at 60194af (formation orbit signs + perm-member
+  S-sum double-emit/cancel). REGRESSED at 458ccc8 (C-015 canonical-space
+  orbit mining) and stayed broken through milestone 2aa06db — INVISIBLE
+  because the battery's TRAIN list excludes held-out problems. Re-fixed at
+  701c6b3 (the wall-time session's self-check/emission repairs: permute
+  charging, family combine priced by its real regime).
+- LESSON (protocol-level): a bug closed on train coverage can silently
+  regress on held-out problems. When a fix lands, re-run the held-out
+  problems once; at each milestone, the battery should include one
+  held-out sweep (measurement, not tuning).
+- CURRENT STATE (701c6b3): verifies; FLOPs 25.72G vs gristmill 19.83G =
+  1.30x — lambda is BEHIND baseline on FLOPs; whether that is a missing
+  structural class on lambda-style equations is an open C-entry question.
+
+## B-008-original (superseded text kept for audit):
 - symptom: held-out ccsd_lambda candidate fails with EinsumOutputNotInput
   (ValueId 50, IndexId 156); ILP objective (22.15G) != emitted price
   (24.22G) — emission does not realize the ILP solution.
