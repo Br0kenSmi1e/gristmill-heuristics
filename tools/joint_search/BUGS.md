@@ -103,3 +103,15 @@ fixture, fix, regression pointer. CLOSED entries kept for audit.
   accepted as micro-residual, cause unknown).
 - became goal-decisive: adc2's objective already beat gristmill; the
   honest accounting + C-012 closed the emitted gap to exactly 1.000000.
+
+## B-008 ccsd_lambda verify failure (held-out) [OPEN]
+- symptom: held-out ccsd_lambda candidate fails with EinsumOutputNotInput
+  (ValueId 50, IndexId 156); ILP objective (22.15G) != emitted price
+  (24.22G) — emission does not realize the ILP solution.
+- mechanism: NOT verified. Found by the held-out evaluation
+  (trials/20261104-*.jsonl, kind=heldout-eval). Zone: family/S-sum emission
+  on lambda-equation structure (not covered by the train corpus).
+- exposing fixture: benches/chemistry/ccsd_lambda.json (held-out problem;
+  fix work happens there but the train-corpus gates remain primary).
+- next: term_bisect.py on ccsd_lambda output 45/78; the per-contribution
+  bisector (diag_contrib.py) localizes.
