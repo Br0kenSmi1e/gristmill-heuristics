@@ -339,3 +339,37 @@ Critic-pass note: ccsd priced is 8.2K BELOW the ILP objective (the
 accounting now slightly overcounts — likely cluster-presence edge);
 cosmetic, flagged for the next B-007 follow-up. adc2 remains the only
 goal blocker: mp3 0.6564 | ccd 0.9919 | ccsd 0.9348 | adc2 1.000000.
+
+## 2026-11-05 — wall-time objective swap (v3 pricer) + first wall benchmarks
+
+Rebased onto mainline HEAD (473e094, model v3) cleanly. Part 1: the ILP
+objective is now v3 wall time via tools/joint_search/wallmodel.py — a
+faithful Python port of mainline costmodel.rs (det_greedy_pairs, regime
+classification, cache cliffs), with rates read from profiles/calibrate-v2.json
+(never hardcoded; thresholds/floors ported with provenance comments).
+Pricer validated vs harness --layout model pricing on adc2/ccsd_gristmill:
+as-written totals 1.39x/1.04x; clean-assumed (the layout-model reality the
+emitter targets) 0.78x/0.83x — recorded; ILP uses clean_assumed.
+
+The Axis-1 FLOP cap row (F-018 architecture) was implemented and then
+REMOVED by task decision: capped ccd-nosym was infeasible despite a known
+1.016x feasible point (a cf accounting gap on the nosym path; cap row
+construction verified OK, cover costs flop-identical across pricings).
+Consequence measured: uncapped wall objective drifts flop-heavy on nosym
+(ccd 1.381x, ccsd 1.323x baseline FLOPs); sym variants keep flop wins
+(mp3 0.656, ccd 0.992, ccsd 0.935, adc2 1.000 — all verified, battery
+all-pass at (3,5), budget fine). The cap infeasibility is a known open
+gap if the cap is ever wanted back.
+
+Self-check residuals (ILP obj vs emitted wall): mp3 0.008%, ccd 0.6%,
+ccsd 8.6%, adc2 12% — smooth lincomb/cluster-unit conversion residuals,
+no op-class cliffs (the two structural bugs found en route are fixed:
+permute ops are FLOP-free but NOT wall-free (13 ms of uncharged permutes
+on ccd); the family combine's flop-2x is the FMA convention, not two ops).
+diag_wall.py is the committed diagnostic; JS_DEBUG=1 prints comb accounting.
+
+Part 2: benchmarks on the five verification-passing instances (eom_ccsd
+regenerated one-shot under the current solver and re-verified, 6.8e-16).
+Headline: real t1 wins on mp3/ccd/ccsd/adc2 (0.62-0.88x); t16 mixed
+(ccd/adc2 ~parity); held-out eom_ccsd loses (1.14x/1.30x). See SCOREBOARD
+wall section for the numbers and load caveats.

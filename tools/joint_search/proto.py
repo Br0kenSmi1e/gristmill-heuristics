@@ -5,9 +5,11 @@ ILP (HiGHS via scipy.optimize.milp) over sharing/factoring decisions on the
 term-by-subterm structure + exact subset-DP parenthesizer. Pure producer of
 truthmill Program (candidate) JSON; no harness changes.
 
-Costs are exact FLOP counts: an einsum step costs 2 * prod(extents of all
-labels it mentions) (one fused multiply-add per output element per summed
-element). LinComb step costs len(args) * prod(output extents).
+Costs: the objective is v3 wall time (wallmodel.py, rates from
+profiles/calibrate-v2.json); the Axis-1 FLOP cap (<=1.05x the same-equation
+gristmill baseline) is a linear constraint row (F-018 architecture).
+FLOP accounting remains exact (truthmill convention) for the cap and the
+scoreboard ratio.
 
 Subcommands:
   analyze  <problem.json> 0=16,1=64            term/collision statistics
@@ -17,6 +19,7 @@ Subcommands:
 """
 
 import json
+import os
 import sys
 import time as time_mod
 from collections import defaultdict
@@ -27,6 +30,35 @@ from itertools import combinations, permutations
 import numpy as np
 from scipy.optimize import milp, LinearConstraint, Bounds
 from scipy.sparse import lil_matrix
+
+import wallmodel
+
+
+# -------------------------------------------------- objective configuration
+# The ILP objective is v3 wall time (tools/joint_search/wallmodel.py, rates
+# from profiles/calibrate-v2.json), subject to the Axis-1 FLOP cap as a
+# FLOP cap row was implemented then removed by task decision (see NOTES.md).
+WALL_RATES = None
+
+
+def wall_rates():
+    global WALL_RATES
+    if WALL_RATES is None:
+        WALL_RATES = wallmodel.Rates(threads=1)
+    return WALL_RATES
+
+
+def dp2(atoms, out_labels, dom, ext):
+    """Wall-optimal binary tree over `atoms` (label lists); returns
+    (wall_s, flop_of_that_tree, tree, result_labels). The tree is shared
+    with emission so the ILP prices exactly what gets emitted."""
+    return wallmodel.dp_tree_wall(atoms, out_labels, dom, ext,
+                                  wall_rates(), step_cost)
+
+
+def add_units(elems, rank):
+    """One lincomb add over `elems` output elements: (wall_s, flop)."""
+    return wallmodel.wall_add_unit(elems, rank, wall_rates()), elems
 
 
 # ------------------------------------------------------------------ parsing
@@ -525,7 +557,8 @@ def build_universe(terms):
 
 def cover_choices(atom_sets, block_list, out_labels, dom, ext):
     """All ways to cover the term/formation by disjoint candidate blocks;
-    returns [(frozenset-of-block-positions, dp_cost)]."""
+    returns [(cover, wall_cost, flop_cost)] — wall-optimal tree priced under
+    both conventions (flop cost feeds the Axis-1 cap row)."""
     choices = []
     n = len(atom_sets)
     for cover in disjoint_subsets(block_list):
@@ -535,8 +568,8 @@ def cover_choices(atom_sets, block_list, out_labels, dom, ext):
         for i in range(n):
             if i not in used:
                 atoms.append(sorted(atom_sets[i]))
-        cst, _, _ = dp_tree(atoms, list(out_labels), dom, ext)
-        choices.append((cover, cst))
+        wall, flop, _, _ = dp2(atoms, list(out_labels), dom, ext)
+        choices.append((cover, wall, flop))
     return choices
 
 
@@ -794,7 +827,7 @@ def solve_global(terms, ext, time_limit=300, sums=True,
 
     # rests may themselves use materialized product intermediates: each
     # (family, member) gets rest-cover choices, exactly like terms
-    rchoices = {}   # (gamma, t) -> [(cover, cost)]
+    rchoices = {}   # (gamma, t) -> [(cover, wall_cost, flop_cost)]
     for gamma, ctx in fam_ctx.items():
         gsig, cf_rest, out_g = gamma[:3]
         _, cfree, cdom = canon_record(gsig)
@@ -827,22 +860,28 @@ def solve_global(terms, ext, time_limit=300, sums=True,
                                                   term["dom"], ext)
         # per-output S add + combine costs; only identity-perm members
         # ride in the S-sum (non-identity are standalone, B-006 fix 2)
-        comb_cost[gamma] = 0
+        comb_cost[gamma] = (0.0, 0)   # (wall, flop)
         by_out = {}
         for tt, _, _, _ in ctx:
             by_out.setdefault(rep_owner.get(tt), []).append(tt)
         for ov, tts in by_out.items():
             term0 = terms[tts[0]]
+            rank0 = (rep_meta or {}).get(tts[0], {}).get("rank",
+                                                         term0["rank"])
             p_add = 1     # S-space: cf_rest + keep positions
             for cid in cf_rest:
                 p_add *= ext[cdom[cid]]
             pcomb = 1     # combine: cfree + keep positions
             for cid in cfree:
                 pcomb *= ext[cdom[cid]]
+            n_keep = 0
             for p in range(term0["rank"]):
                 if p not in out_g:
                     p_add *= ext[term0["dom"][p]]
                     pcomb *= ext[term0["dom"][p]]
+                    n_keep += 1
+            rank_add = len(cf_rest) + n_keep
+            rank_comb = len(cfree) + n_keep
             n_memb = 0
             for tt in tts:
                 n_memb += 1
@@ -851,12 +890,30 @@ def solve_global(terms, ext, time_limit=300, sums=True,
                     n_memb += sum(
                         1 for _lt, pi in meta["members"][1:]
                         if all(p == q for p, q in enumerate(pi)))
-            comb_cost[gamma] += ((2 if cf_rest else 1) * pcomb
-                                 + max(0, n_memb - 1) * p_add)
+            n_add_units = max(0, n_memb - 1)
+            if os.environ.get("JS_DEBUG"):
+                print(f"[comb] gamma={str(gamma)[:60]} p_add={p_add} "
+                  f"pcomb={pcomb} n_memb={n_memb} cf_rest={len(cf_rest)} "
+                  f"cfree={len(cfree)} n_keep={n_keep} rank0={term0['rank']}",
+                  file=sys.stderr)
+            cw, cf_ = comb_cost[gamma]
+            # Wall accounting for the combine: the flop side charges
+            # (2 if cf_rest else 1) * pcomb, and emission realizes ONE step
+            # at that flop count. Under the clean-assumed layout that step
+            # is a GEMM-class contraction when cf_rest is nonempty
+            # (multiply-add convention), else a streaming multiply.
+            if cf_rest:
+                cw += 2.0 * pcomb / wall_rates().r_gemm
+            else:
+                cw += 3.0 * pcomb * 8.0 / wall_rates().bw_mul
+            cw += n_add_units * wallmodel.wall_add_unit(p_add, rank_add,
+                                                        wall_rates())
+            cf_ += (2 if cf_rest else 1) * pcomb + n_add_units * p_add
+            comb_cost[gamma] = (cw, cf_)
         # non-identity perm members of covered reps are emitted
         # separately (plain full evaluation) UNLESS the family is
         # orbit-consistent (C-016: they ride the family result for free)
-        extra = 0
+        extra_w, extra_f = 0.0, 0
         if fam_sig.get(gamma) is None:
             for tt, _, _, _ in ctx:
                 meta = (rep_meta or {}).get(tt)
@@ -865,12 +922,14 @@ def solve_global(terms, ext, time_limit=300, sums=True,
                 for _lt, pi in meta["members"][1:]:
                     if not all(p == q for p, q in enumerate(pi)):
                         term = terms[tt]
-                        cst, _, _ = dp_tree([list(ls) for _, ls in
-                                             term["factors"]],
-                                            list(range(term["rank"])),
-                                            term["dom"], ext)
-                        extra += cst
-        comb_cost[gamma] += extra
+                        w, f, _, _ = dp2([list(ls) for _, ls in
+                                          term["factors"]],
+                                         list(range(term["rank"])),
+                                         term["dom"], ext)
+                        extra_w += w
+                        extra_f += f
+        cw, cf_ = comb_cost[gamma]
+        comb_cost[gamma] = (cw + extra_w, cf_ + extra_f)
 
     # C-012/C-016 sum-orbit clusters over final-lincomb items: ungrouped
     # reps (z-covered) and orbit-consistent family results, clustered per
@@ -895,21 +954,27 @@ def solve_global(terms, ext, time_limit=300, sums=True,
                 for ov in ovs:
                     items_by_out[ov].append(("h", gamma, sig))
         for ov, items in items_by_out.items():
+            rank_ov = next((rep_meta[tt]["rank"]
+                            for tt, (o2, _po) in rep_pout.items()
+                            if o2 == ov and tt in rep_meta), 0)
             for ks, sig in orbit_clusters(
                     [((it[0], it[1]), it[2]) for it in items]):
                 saving = (len(ks) - 1) * len(sig) * p_out_of[ov]
-                clusters.append((ks, saving))
+                saving_wall = (len(ks) - 1) * len(sig) * \
+                    wallmodel.wall_add_unit(p_out_of[ov], rank_ov,
+                                            wall_rates())
+                clusters.append((ks, saving, saving_wall))
 
     # ---- ILP
     x_idx = {s: i for i, s in enumerate(cand)}
-    yvars = []   # (sig, cover, cost)
+    yvars = []   # (sig, cover, wall, flop)
     for s in cand:
-        for cover, cst in forms[s]:
-            yvars.append((s, cover, cst))
-    zvars = []   # (t, cover, cost)
+        for cover, w, f in forms[s]:
+            yvars.append((s, cover, w, f))
+    zvars = []   # (t, cover, wall, flop)
     for t in range(len(terms)):
-        for cover, cst in tchoices[t]:
-            zvars.append((t, cover, cst))
+        for cover, w, f in tchoices[t]:
+            zvars.append((t, cover, w, f))
     hvars = sorted(fam_ctx)                    # gamma
     svars = sorted({fam_sigma[g] for g in hvars})
     rvars = [(g, t, ci) for (g, t), chs in rchoices.items()
@@ -928,10 +993,15 @@ def solve_global(terms, ext, time_limit=300, sums=True,
     r_idx = {rt: i for i, rt in enumerate(rvars)}
     r_cov = {rt: chs for rt, chs in rchoices.items()}
 
+    # Dual cost vectors: c = v3 wall time (the objective);
+    # cf = truthmill-convention FLOPs of the SAME choices (the Axis-1 cap
+    # row). Both are linear in the decision variables (F-018 architecture).
     c = np.zeros(n)
-    for j, (_, _, cst) in enumerate(yvars):
-        c[nx + j] = cst
-    for j, (zt, _, cst) in enumerate(zvars):
+    cf = np.zeros(n)
+    for j, (_, _, w, f) in enumerate(yvars):
+        c[nx + j] = w
+        cf[nx + j] = f
+    for j, (zt, _, w, f) in enumerate(zvars):
         # final-lincomb add units: an ungrouped rep contributes 1 arg
         # (identity members fold into its coeff) plus one permuted arg
         # per non-identity member (B-007/C-012 exact accounting)
@@ -940,12 +1010,25 @@ def solve_global(terms, ext, time_limit=300, sums=True,
         if meta:
             n_nonid = sum(1 for _lt, pi in meta["members"][1:]
                           if not all(p == q for p, q in enumerate(pi)))
-        c[nx + ny + j] = cst + (rep_pout[zt][1] * (1 + n_nonid)
-                                if rep_pout else 0)
+        if rep_pout:
+            po = rep_pout[zt][1]
+            rank = rep_meta[zt]["rank"] if meta else 0
+            # each non-identity member also emits a standalone output
+            # permute (FLOP-free but not wall-free; the ccd self-check
+            # delta was exactly 8 of these)
+            pw = wallmodel.permute_wall(po, rank, wall_rates())
+            c[nx + ny + j] = w + (wallmodel.wall_add_unit(po, rank,
+                                                          wall_rates())
+                                  * (1 + n_nonid)) + pw * n_nonid
+            cf[nx + ny + j] = f + po * (1 + n_nonid)
+        else:
+            c[nx + ny + j] = w
+            cf[nx + ny + j] = f
     for j, g in enumerate(hvars):
         # a chosen family contributes 1 + (#non-identity perm members of
         # its covered reps, emitted standalone) final-lincomb args
         lc_units = 0
+        lc_wall = 0.0
         if rep_pout:
             # a family may span outputs (emitted once per owning output):
             # sum the per-output lincomb units. Orbit-consistent families
@@ -958,8 +1041,10 @@ def solve_global(terms, ext, time_limit=300, sums=True,
                 if ov not in ovs:
                     ovs.append(ov)
             for ov in ovs:
-                po = rep_pout[[tt for tt, _, _, _ in fam_ctx[g]
-                               if rep_pout[tt][0] == ov][0]][1]
+                tt0 = [tt for tt, _, _, _ in fam_ctx[g]
+                       if rep_pout[tt][0] == ov][0]
+                po = rep_pout[tt0][1]
+                rank = rep_meta[tt0]["rank"] if tt0 in rep_meta else 0
                 if fsig is not None:
                     n_args = 1 + len(fsig)
                 else:
@@ -974,25 +1059,31 @@ def solve_global(terms, ext, time_limit=300, sums=True,
                                 if not all(p == q
                                            for p, q in enumerate(pi)))
                 lc_units += po * n_args
-        c[h0 + j] = comb_cost[g] + lc_units
+                lc_wall += wallmodel.wall_add_unit(po, rank,
+                                                   wall_rates()) * n_args
+        cw, cfl = comb_cost[g]
+        c[h0 + j] = cw + lc_wall
+        cf[h0 + j] = cfl + lc_units
     for j, (g, t, ci) in enumerate(rvars):
         c[r0 + j] = r_cov[(g, t)][ci][1]
+        cf[r0 + j] = r_cov[(g, t)][ci][2]
     # C-012/C-016 sum-orbit clusters: if every item of a cluster is
     # chosen (reps z-covered, families chosen), the final lincomb merges
     # the orbit over one pre-sum, saving (k-1)*m adds of the output size.
-    for ci, (_items, saving) in enumerate(clusters):
-        c[w0 + ci] = -saving
+    for ci, (_items, saving, saving_wall) in enumerate(clusters):
+        c[w0 + ci] = -saving_wall
+        cf[w0 + ci] = -saving
 
     rows, lb, ub = [], [], []
     # exactly one formation per materialized sig
     for i, s in enumerate(cand):
         row = lil_matrix((1, n))
         row[0, i] = 1.0
-        for j, (ys, _, _) in enumerate(yvars):
+        for j, (ys, _, _, _) in enumerate(yvars):
             if ys == s:
                 row[0, nx + j] = -1.0
         rows.append(row); lb.append(0.0); ub.append(0.0)
-    for j, (ys, cover, _) in enumerate(yvars):
+    for j, (ys, cover, _, _) in enumerate(yvars):
         for b in cover:
             row = lil_matrix((1, n))
             row[0, nx + j] = 1.0
@@ -1001,14 +1092,14 @@ def solve_global(terms, ext, time_limit=300, sums=True,
     # term coverage: plain cover OR one family membership
     for t in range(len(terms)):
         row = lil_matrix((1, n))
-        for j, (zt, _, _) in enumerate(zvars):
+        for j, (zt, _, _, _) in enumerate(zvars):
             if zt == t:
                 row[0, nx + ny + j] = 1.0
         for j, (g, tt, ci) in enumerate(rvars):
             if tt == t:
                 row[0, r0 + j] = 1.0
         rows.append(row); lb.append(1.0); ub.append(1.0)
-    for j, (zt, cover, _) in enumerate(zvars):
+    for j, (zt, cover, _, _) in enumerate(zvars):
         for b in cover:
             row = lil_matrix((1, n))
             row[0, nx + ny + j] = 1.0
@@ -1037,18 +1128,27 @@ def solve_global(terms, ext, time_limit=300, sums=True,
             rows.append(row); lb.append(-np.inf); ub.append(0.0)
 
     # w_C <= (item chosen): z-sum per rep, h per family
-    for ci, (cl_items, _saving) in enumerate(clusters):
+    for ci, (cl_items, _saving, _sw) in enumerate(clusters):
         for kind, idx in cl_items:
             row = lil_matrix((1, n))
             row[0, w0 + ci] = 1.0
             if kind == "z":
-                for j, (zt, _, _) in enumerate(zvars):
+                for j, (zt, _, _, _) in enumerate(zvars):
                     if zt == idx:
                         row[0, nx + ny + j] = -1.0
             else:
                 row[0, h0 + h_idx[idx]] = -1.0
             rows.append(row); lb.append(-np.inf); ub.append(0.0)
 
+    # NOTE (task decision, recorded in NOTES.md): an Axis-1 FLOP cap row
+    # (F-018 architecture) was implemented, then REMOVED by user decision
+    # after capped ccd-nosym proved infeasible (a cf accounting gap on the
+    # nosym path made the cap unsatisfiable despite a known 1.016x feasible
+    # point). Consequence, measured and recorded: the uncapped wall
+    # objective drifts flop-heavy where wall time prefers it (ccd-nosym
+    # uncapped optimum = 1.38x baseline FLOPs). Emitted flop ratios are
+    # reported per run and visible on the scoreboard; the wall-time
+    # benchmarks are the acceptance measurement.
     from scipy.sparse import vstack
     A = vstack(rows).tocsr()
     t_build = time_mod.time() - t0
@@ -1058,17 +1158,38 @@ def solve_global(terms, ext, time_limit=300, sums=True,
     stats = {"U": len(U), "candidates": len(cand), "vars": n,
              "constraints": A.shape[0], "build_s": t_build,
              "families": nh, "sigmas": ns, "status": res.status,
-             "mip_gap": getattr(res, "mip_gap", None)}
+             "mip_gap": getattr(res, "mip_gap", None),
+             "flop_cap": None}
+
     if res.x is None:
         return None, stats
     xs = res.x
+    stats["flops_at_solution"] = float(cf @ xs)
+    stats["objective_wall_s"] = float(res.fun)
+    # diagnostic payload for the wall self-check (diag_wall.py): chosen
+    # vars with their (wall, flop) costs
+    stats["chosen"] = {
+        "x": [(s, 0.0, 0.0) for i, s in enumerate(cand) if xs[i] > 0.5],
+        "y": [(str(ys), yvars[j][2], yvars[j][3])
+              for j, (ys, _, _, _) in enumerate(yvars) if xs[nx + j] > 0.5],
+        "z": [(zt, zvars[j][2], zvars[j][3],
+               c[nx + ny + j] - zvars[j][2], cf[nx + ny + j] - zvars[j][3])
+              for j, (zt, _, _, _) in enumerate(zvars)
+              if xs[nx + ny + j] > 0.5],
+        "h": [(str(g), c[h0 + j], cf[h0 + j])
+              for j, g in enumerate(hvars) if xs[h0 + j] > 0.5],
+        "r": [(str(rvars[j]), c[r0 + j], cf[r0 + j])
+              for j in range(nr) if xs[r0 + j] > 0.5],
+        "w": [(ci, c[w0 + ci], cf[w0 + ci])
+              for ci in range(nw) if xs[w0 + ci] > 0.5],
+    }
     sol = {
         "fam_ctx": fam_ctx,
         "fam_sig": fam_sig,
         "x": {s for i, s in enumerate(cand) if xs[i] > 0.5},
-        "y": {ys: cover for j, (ys, cover, _) in enumerate(yvars)
+        "y": {ys: cover for j, (ys, cover, _, _) in enumerate(yvars)
               if xs[nx + j] > 0.5},
-        "z": {t: cover for j, (t, cover, _) in enumerate(zvars)
+        "z": {t: cover for j, (t, cover, _, _) in enumerate(zvars)
               if xs[nx + ny + j] > 0.5},
         "h": {hvars[j] for j in range(nh) if xs[h0 + j] > 0.5},
         "r": {rvars[j]: r_cov[(rvars[j][0], rvars[j][1])][rvars[j][2]][0]
@@ -1260,8 +1381,11 @@ def emit_binary_tree(values, leaf_info, out_order, dom, ext, sign=1):
             "args": [ref]}})
         return {"Value": vid}, tuple(out_order)
 
-    _, tree, _ = dp_tree([list(ls) for _, ls in leaf_info],
-                         list(out_order), dom, ext)
+    # The tree priced in the ILP is the wall-optimal one (objective swap);
+    # emission must build exactly that tree for the self-check to hold.
+    _, _, tree, _ = wallmodel.dp_tree_wall([list(ls) for _, ls in leaf_info],
+                                           list(out_order), dom, ext,
+                                           wall_rates(), step_cost)
 
     def emit(node, is_root):
         if isinstance(node, int):
@@ -1890,15 +2014,28 @@ def main():
         problem = json.load(open(prob_path))
         if len(sys.argv) > 5 and sys.argv[5] == "sym":
             SYMS = problem["symmetries"]
+        # Axis-1 cap from the same-equation baseline, when present
+        import os
+        stem = os.path.basename(prob_path).replace(".json", "")
+        base_path = os.path.join(os.path.dirname(prob_path), "..",
+                                 "candidates", f"{stem}_gristmill.json")
+        if os.path.exists(base_path):
+            base_flops = price_candidate(json.load(open(base_path)), sizes)
+            print(f"baseline {base_flops} FLOPs (no cap row; task decision)")
         flags = set(sys.argv[5:])
         pack = solve_problem(problem, sizes, partial_keep=True,
                              sums="nosums" not in flags,
                              group="nogroup" not in flags)
         prog = emit_global(pack, sizes)
         priced = price_candidate(prog, sizes)
+        priced_wall = wallmodel.price_candidate_wall(prog, sizes,
+                                                     wall_rates())
         json.dump(prog, open(out_path, "w"))
         print(f"emitted {len(prog['values'])} steps -> {out_path}")
-        print(f"ILP objective {int(pack['obj'])} | emitted priced {priced}")
+        print(f"ILP objective {pack['obj']:.6g} s | emitted wall "
+              f"{priced_wall:.6g} s | emitted {priced} FLOPs "
+              f"| ILP-side flops "
+              f"{int(pack['stats']['flops_at_solution'])}")
 
 
     else:

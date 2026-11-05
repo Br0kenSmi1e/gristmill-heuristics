@@ -69,10 +69,14 @@ def one(problem_path, tag, sizes, sym):
     cand_path = os.path.join(OUT, f"{tag}.json")
     json.dump(prog, open(cand_path, "w"))
     priced = proto.price_candidate(prog, sizes)
+    priced_wall = proto.wallmodel.price_candidate_wall(
+        prog, sizes, proto.wall_rates())
     check = harness_check(problem_path, cand_path)
-    return {"tag": tag, "ilp_objective": pack["obj"],
-            "emitted_priced": priced, "check": check,
-            "solve_s": round(time.time() - t0, 2)}
+    return {"tag": tag, "ilp_objective_wall_s": pack["obj"],
+            "ilp_objective_flops": pack["stats"]["flops_at_solution"],
+            "emitted_priced": priced, "emitted_wall_s": priced_wall,
+            "wall_check_delta_s": priced_wall - pack["obj"],
+            "check": check, "solve_s": round(time.time() - t0, 2)}
 
 
 def main():
@@ -100,8 +104,14 @@ def main():
                                f"{p}_gristmill.json")), {0: 16, 1: 64})
             rec["gristmill_flops"] = base
             rec["ratio"] = rec["emitted_priced"] / base
+            rec["gristmill_wall_s"] = proto.wallmodel.price_candidate_wall(
+                json.load(open(f"{ROOT}/benches/candidates/"
+                               f"{p}_gristmill.json")), {0: 16, 1: 64},
+                proto.wall_rates())
+            rec["wall_ratio_model"] = rec["emitted_wall_s"] / rec["gristmill_wall_s"]
             record["results"].append(rec)
-            print(f"{tag}: ratio {rec['ratio']:.4f} "
+            print(f"{tag}: flop-ratio {rec['ratio']:.4f} "
+                  f"wall-ratio(model) {rec['wall_ratio_model']:.4f} "
                   f"pass {rec['check']['pass']}")
 
     for f in FIXTURES:
