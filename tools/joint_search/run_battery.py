@@ -29,6 +29,9 @@ os.makedirs(TRIALS, exist_ok=True)
 os.makedirs(OUT, exist_ok=True)
 
 TRAIN = ["mp3", "ccd", "ccsd", "adc2"]
+# held-out problems: MEASUREMENT ONLY (never tuned against) — included per
+# the B-008 lesson: train-closed bugs can silently regress on held-out.
+HELDOUT = ["ccsd_lambda", "eom_ccsd", "ccsd_t"]
 FIXTURES = ["antisym_test", "antisym_test2", "ccsd_energy",
             "ccsd_doubles_38_39_40_42_43", "ccsd_doubles_36_37_50_51"]
 
@@ -119,6 +122,25 @@ def main():
                   f, {0: 16, 1: 64}, True)
         record["results"].append(rec)
         print(f"{f}: pass {rec['check']['pass']}")
+
+    for p in HELDOUT:
+        tag = f"{p}_heldout"
+        rec = one(f"{ROOT}/benches/chemistry/{p}.json", tag,
+                  {0: 16, 1: 64}, True)
+        base = proto.price_candidate(
+            json.load(open(f"{ROOT}/benches/candidates/"
+                           f"{p}_gristmill.json")), {0: 16, 1: 64})
+        rec["gristmill_flops"] = base
+        rec["ratio"] = rec["emitted_priced"] / base
+        rec["gristmill_wall_s"] = proto.wallmodel.price_candidate_wall(
+            json.load(open(f"{ROOT}/benches/candidates/"
+                           f"{p}_gristmill.json")), {0: 16, 1: 64},
+            proto.wall_rates())
+        rec["wall_ratio_model"] = rec["emitted_wall_s"] / rec["gristmill_wall_s"]
+        record["results"].append(rec)
+        print(f"{tag}: flop-ratio {rec['ratio']:.4f} "
+              f"wall-ratio(model) {rec['wall_ratio_model']:.4f} "
+              f"pass {rec['check']['pass']}")
 
     line = json.dumps(record)
     path = os.path.join(TRIALS,

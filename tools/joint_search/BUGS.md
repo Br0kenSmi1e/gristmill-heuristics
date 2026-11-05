@@ -132,3 +132,15 @@ fixture, fix, regression pointer. CLOSED entries kept for audit.
   fix work happens there but the train-corpus gates remain primary).
 - next: term_bisect.py on ccsd_lambda output 45/78; the per-contribution
   bisector (diag_contrib.py) localizes.
+
+## B-009 duplicate ctx entries in family candidates [CLOSED, latent]
+- symptom: sum_group_candidates appended one entry per matching cofactor
+  SUBSET, so a rep with two matching subsets entered a family's ctx twice
+  (S-sum double-count if ever chosen; n_memb overcount in pricing;
+  rchoices last-wins vs emission rentry first-wins desync).
+- mechanism: verified by inspection of ccsd_lambda fam_ctx (members
+  [35,38,59,59,66,66]). No CHOSEN family anywhere on train had duplicates
+  (checked all four) — latent only.
+- fix: one entry per rep per key (first match kept).
+- side effect: ccsd no-sym improved 1.5047 → 1.3227 (deduped pricing).
+- regression: full battery + held-out sweep.

@@ -610,6 +610,11 @@ def sum_group_candidates(terms, term_entries, partial_keep=True,
                                      if p in labs_g
                                      and p not in rest_labels))
                 key = (sig, cf_rest, out_g)
+                # B-009: one entry per rep per key (the first match);
+                # duplicate matches would double-count the S-sum and
+                # desync rchoices (last) vs emission rentry (first)
+                if any(e[0] == t for e in groups[key]):
+                    continue
                 groups[key].append((t, idxs, ren, sgn))
     return {key: ctx for key, ctx in groups.items() if len(ctx) >= 2}
 
@@ -671,6 +676,26 @@ def solve_problem(problem, ext, time_limit=300, sums=True, group=True,
             t["out_rank"] = r
         if group:
             groups, perms, tsigns = term_groups(terms)
+            # C-018: exact cancellation — a group whose identity-folded
+            # net coeff is zero and which has no non-identity members is
+            # an exact ±-duplicate sum: contributes nothing. Drop it
+            # BEFORE the ILP (else we pay full evals for zero).
+            drop = set()
+            for _sig, members in groups:
+                rep = members[0]
+                c_eff = terms[rep]["coeff"]
+                nonid = False
+                for t in members[1:]:
+                    if all(p == q for p, q in enumerate(perms[t])):
+                        c_eff += terms[t]["coeff"] * tsigns[t] * tsigns[rep]
+                    else:
+                        nonid = True
+                if c_eff == 0 and not nonid:
+                    drop.update(members)
+            if drop:
+                terms = [t for i, t in enumerate(terms) if i not in drop]
+                groups, perms, tsigns = term_groups(terms)
+                print(f"C-018: dropped {len(drop)} exactly-canceling terms")
             reps = sorted(m[0] for _, m in groups)
             nmemb = {m[0]: len(m) for _, m in groups}
             for t in reps:

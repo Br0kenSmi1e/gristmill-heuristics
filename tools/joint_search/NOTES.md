@@ -373,3 +373,23 @@ regenerated one-shot under the current solver and re-verified, 6.8e-16).
 Headline: real t1 wins on mp3/ccd/ccsd/adc2 (0.62-0.88x); t16 mixed
 (ccd/adc2 ~parity); held-out eom_ccsd loses (1.14x/1.30x). See SCOREBOARD
 wall section for the numbers and load caveats.
+
+## Held-out evaluation + C-018 exact cancellation (milestone)
+
+Held-out sweep (eval_heldout.py, now folded into run_battery per the
+B-008 lesson — measurement only, never tuned): all three verify.
+
+C-018 (exact term-group cancellation): term groups whose identity-folded
+net coeff is zero and have no perm members contribute exactly nothing —
+dropped before the ILP. Verified numerically: ccsd_lambda has five
+canceling quartets (60 of 114 terms), group sums == 0 exactly. Zero
+effect on train (no dropping fires there).
+
+Held-out scoreboard (flop ratio / wall-ratio model):
+- ccsd_lambda: 0.9288 / 0.6622 (was 1.2970 pre-C-018) — now BEATS
+- eom_ccsd:    0.9424 / 1.0632 — flops beat, wall slightly behind
+- ccsd_t:      0.4100 / 0.0084 — large win both axes (solve 10.3s at
+  54 scalar-output terms with rank-6 tensors — over the 10s train budget
+  but out of battery scope; watch if it enters a battery)
+
+B-009 (latent duplicate family-ctx entries) fixed alongside.

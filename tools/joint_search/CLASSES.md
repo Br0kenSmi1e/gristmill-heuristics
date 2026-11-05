@@ -79,3 +79,13 @@ landed classes.
   fast at corpus scale. Revisit only if the universe blows up at
   CCSD(T) scale (F-017-blocked anyway).
 - E-graph arm: AC+distributivity explosion; demoted (see design doc).
+
+## Landed (cont'd)
+
+- **C-018 exact term-group cancellation** — a term group whose
+  identity-folded net coeff is zero (with no non-identity members) is an
+  exact ±-duplicate sum and is dropped before the ILP. Measured: zero
+  effect on train; on held-out ccsd_lambda 60 of 114 terms cancel
+  (Lambda-equation P-antisymmetrizer quartets) — FLOP ratio 1.297 →
+  0.9288 (verified). Mechanism verified numerically (group sums == 0
+  exactly at (3,5)).
