@@ -865,11 +865,25 @@ fn main() -> Result<()> {
                 let prog = load_program(&problem, "none", 256, Some(cand.clone()))?;
                 let logf = truthmill::log_flops(&problem, &prog)
                     .map_err(|e| anyhow::anyhow!("cost: {e:?}"))?;
+                let sf = truthmill::symbolic_flops(&problem, &prog)
+                    .map_err(|e| anyhow::anyhow!("cost: {e:?}"))?;
+                let terms: Vec<serde_json::Value> = sf
+                    .terms()
+                    .iter()
+                    .map(|t| {
+                        serde_json::json!({
+                            "coefficient": t.coefficient().to_string(),
+                            "powers": t.powers().iter().map(|(d, e)| (d.0.to_string(), *e)).collect::<std::collections::BTreeMap<_, _>>(),
+                            "total_degree": t.total_degree(),
+                        })
+                    })
+                    .collect();
                 let record = serde_json::json!({
                     "kind": "flops",
                     "problem": stem(&cand),
                     "sizes": sizes_map(&problem),
                     "log10_flops": logf / std::f64::consts::LN_10,
+                    "symbolic_terms": terms,
                 });
                 println!("{}", serde_json::to_string(&record)?);
                 return Ok(());

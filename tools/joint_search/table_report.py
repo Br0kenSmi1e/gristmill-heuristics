@@ -19,6 +19,8 @@ import subprocess
 import sys
 import time
 
+import math
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 sys.path.insert(0, HERE)
@@ -51,6 +53,31 @@ print(f"{t1-t0:.4f} {priced}")
 """
 
 
+def symbolic_flops_terms(cand_path):
+    """truthmill's own symbolic_flops via harness flops --candidate."""
+    # problem path is only used for sizes/domains; find it from the cand
+    r = subprocess.run([HARNESS, "flops", cand_path[0],
+                        "--candidate", cand_path[1]],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError(r.stderr[:300])
+    return json.loads(r.stdout)["symbolic_terms"]
+
+
+def lead_flops_str(terms):
+    """Highest-order symbolic term(s), truthmill order, display form."""
+    deg = max(t["total_degree"] for t in terms)
+    lead = [t for t in terms if t["total_degree"] == deg]
+    parts = []
+    for t in lead:
+        c = t["coefficient"]
+        mon = " ".join(f"D{d}^{e}" if e != 1 else f"D{d}"
+                       for d, e in sorted(t["powers"].items(),
+                                          key=lambda kv: int(kv[0])))
+        parts.append(f"{c}*{mon}" if c != "1" else mon)
+    return " + ".join(parts)
+
+
 def load1():
     with open("/proc/loadavg") as f:
         return float(f.read().split()[0])
@@ -80,27 +107,32 @@ def main():
         r2 = subprocess.run([VENV_PY, "-c", OURS_SOLVE, name],
                             capture_output=True, text=True, cwd=ROOT)
         o_solve, o_flops = r2.stdout.strip().split()[-2:]
-        # flops + verification
-        gf = proto.price_candidate(
-            json.load(open(f"{ROOT}/benches/candidates/"
-                           f"{name}_gristmill.json")), FLOP_SIZES)
+        # flops + verification (symbolic polynomial via truthmill itself)
         ours_path = f"{ROOT}/tools/joint_search/out/{name}_table.json"
+        g_terms = symbolic_flops_terms(
+            (prob, f"{ROOT}/benches/candidates/{name}_gristmill.json"))
+        o_terms = symbolic_flops_terms(
+            (prob, ours_path))
         ok = subprocess.run(
             [HARNESS, "check", prob, "--sizes", "0=3,1=5",
              "--candidate", ours_path],
             capture_output=True, text=True)
         passed = ok.returncode == 0 and json.loads(ok.stdout)["pass"]
-        row = {"name": name, "grist_log10_flops": None,
-               "grist_flops": gf, "grist_optimize_s": g_opt,
+        row = {"name": name,
+               "grist_flops_symbolic_lead": lead_flops_str(g_terms),
+               "ours_flops_symbolic_lead": lead_flops_str(o_terms),
+               "grist_optimize_s": g_opt,
                "ours_solve_emit_s": float(o_solve),
-               "ours_flops": int(o_flops), "verified": passed}
-        import math
-        row["grist_log10_flops"] = math.log10(gf)
+               "verified": passed}
+        row["grist_log10_flops"] = math.log10(
+            proto.price_candidate(
+                json.load(open(f"{ROOT}/benches/candidates/"
+                               f"{name}_gristmill.json")), FLOP_SIZES))
         row["ours_log10_flops"] = math.log10(int(o_flops))
         rows.append(row)
-        print(f"{name:12s} grist {row['grist_log10_flops']:.4f} "
-              f"{g_opt}s | ours {row['ours_log10_flops']:.4f} "
-              f"{o_solve}s | verified {passed}", flush=True)
+        print(f"{name:12s} {row['grist_flops_symbolic_lead']:>24} | "
+              f"{row['ours_flops_symbolic_lead']:>24} | "
+              f"{g_opt:.2f}s | {o_solve}s | verified {passed}", flush=True)
     path = os.path.join(HERE, "trials",
                         time.strftime("%Y%m%d-%H%M%S") + ".jsonl")
     with open(path, "a") as fh:
