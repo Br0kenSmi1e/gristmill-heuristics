@@ -28,13 +28,13 @@ import proto  # noqa: E402
 
 HARNESS = os.path.join(ROOT, "target", "debug", "harness")
 GRIST_PY = "/tmp/gristmill-venv/bin/python"
-GRIST_SCRIPT = "/tmp/gristmill_baseline_timed.py"
+GRIST_SCRIPT = "/tmp/gristmill_baseline_timed5.py"  # substs nv=5*no <=> O=1000,V=5000
 COMP_DIR = "/tmp/comp"
 VENV_PY = os.path.join(HERE, ".venv", "bin", "python")
 
 INSTANCES = ["mp3", "ccd", "ccsd", "adc2", "ccsd_lambda", "eom_ccsd",
              "ccsd_t"]
-FLOP_SIZES = {0: 16, 1: 64}
+FLOP_SIZES = {0: 1000, 1: 5000}
 
 OURS_SOLVE = r"""
 import sys, json, time
@@ -44,10 +44,10 @@ name = sys.argv[1]
 prob = json.load(open(f'benches/chemistry/{name}.json'))
 proto.SYMS = prob['symmetries']
 t0 = time.time()
-pack = proto.solve_problem(prob, {0:16,1:64})
-prog = proto.emit_global(pack, {0:16,1:64})
+pack = proto.solve_problem(prob, {0:1000,1:5000})
+prog = proto.emit_global(pack, {0:1000,1:5000})
 t1 = time.time()
-priced = proto.price_candidate(prog, {0:16,1:64})
+priced = proto.price_candidate(prog, {0:1000,1:5000})
 json.dump(prog, open(f'tools/joint_search/out/{name}_table.json', 'w'))
 print(f"{t1-t0:.4f} {priced}")
 """
@@ -71,7 +71,8 @@ def lead_flops_str(terms):
     parts = []
     for t in lead:
         c = t["coefficient"]
-        mon = " ".join(f"D{d}^{e}" if e != 1 else f"D{d}"
+        names = {"0": "O", "1": "V"}
+        mon = " ".join(f"{names[d]}^{e}" if e != 1 else names[d]
                        for d, e in sorted(t["powers"].items(),
                                           key=lambda kv: int(kv[0])))
         parts.append(f"{c}*{mon}" if c != "1" else mon)
@@ -109,8 +110,12 @@ def main():
         o_solve, o_flops = r2.stdout.strip().split()[-2:]
         # flops + verification (symbolic polynomial via truthmill itself)
         ours_path = f"{ROOT}/tools/joint_search/out/{name}_table.json"
-        g_terms = symbolic_flops_terms(
-            (prob, f"{ROOT}/benches/candidates/{name}_gristmill.json"))
+        g_cand = f"{COMP_DIR}/{name}_grist.json"
+        ok_g = subprocess.run(
+            [HARNESS, "check", prob, "--sizes", "0=3,1=5",
+             "--candidate", g_cand], capture_output=True, text=True)
+        passed_g = ok_g.returncode == 0 and json.loads(ok_g.stdout)["pass"]
+        g_terms = symbolic_flops_terms((prob, g_cand))
         o_terms = symbolic_flops_terms(
             (prob, ours_path))
         ok = subprocess.run(
@@ -119,20 +124,20 @@ def main():
             capture_output=True, text=True)
         passed = ok.returncode == 0 and json.loads(ok.stdout)["pass"]
         row = {"name": name,
+               "grist_verified": passed_g,
                "grist_flops_symbolic_lead": lead_flops_str(g_terms),
                "ours_flops_symbolic_lead": lead_flops_str(o_terms),
                "grist_optimize_s": g_opt,
                "ours_solve_emit_s": float(o_solve),
                "verified": passed}
         row["grist_log10_flops"] = math.log10(
-            proto.price_candidate(
-                json.load(open(f"{ROOT}/benches/candidates/"
-                               f"{name}_gristmill.json")), FLOP_SIZES))
+            proto.price_candidate(json.load(open(g_cand)), FLOP_SIZES))
         row["ours_log10_flops"] = math.log10(int(o_flops))
         rows.append(row)
         print(f"{name:12s} {row['grist_flops_symbolic_lead']:>24} | "
               f"{row['ours_flops_symbolic_lead']:>24} | "
-              f"{g_opt:.2f}s | {o_solve}s | verified {passed}", flush=True)
+              f"{g_opt:.2f}s | {o_solve}s | verified {passed} "
+              f"(gristmill verified {passed_g})", flush=True)
     path = os.path.join(HERE, "trials",
                         time.strftime("%Y%m%d-%H%M%S") + ".jsonl")
     with open(path, "a") as fh:
