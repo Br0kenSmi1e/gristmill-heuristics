@@ -447,3 +447,21 @@ Fixture: fixtures/ccsdt_derived.json. Baseline tooling note: the
 gristmill exporter needed Pow-expansion (drudge canon collapses repeated
 factors to powers) — patched in /tmp/gristmill_baseline_timed5.py (TMP,
 recreate on machine change).
+
+## CCSDTQ (2026-11-09)
+
+gen_cc.py m=4: 190 terms (energy 5, singles 15, doubles 38, triples 53,
+quadruples 74 — textbook content incl. u.t3.t3). Derivation ~18 min
+serial (BCH orders 117/295/284/100 terms).
+
+ILP: EXACT optimum (status 0), U=356, 5513 vars — but 403 s build
+(7523 canon_full calls; the rank-8 canon wall is now the whole cost;
+ILP solve itself is instant). Verified at oracle (3,5) — which itself
+takes ~17 min per candidate (dense rank-8 evaluation; gristmill's
+candidate same). Ratio 0.9825 at (1000,5000): gristmill
+16*O^6V^4+10*O^5V^5+2*O^4V^6 vs ILP 14*O^6V^4+... — same pattern as
+CCSDT: exactly 2 units off the leading O^{k+2}V^k coefficient.
+
+State of the ladder: CCSDT 6s (fine), CCSDTQ 403s (canon-bound). The
+canon rewrite (lazy/pruned enumeration) is the gate to CCSDTQ being
+practical and to MPn n>=6 at all.
