@@ -1,0 +1,7 @@
+{"n": 2, "U": 3, "cand": 0, "vars": 10, "cons": 9, "fams": 2, "canon_calls": 12, "build_s": 0.005, "total_s": 0.01, "ilp_status": 0, "mip_gap": 0.0, "flops": 8388612.0}
+{"n": 3, "U": 6, "cand": 3, "vars": 38, "cons": 40, "fams": 4, "canon_calls": 56, "build_s": 0.006, "total_s": 0.03, "ilp_status": 0, "mip_gap": 0.0, "flops": 4303355908.0}
+{"n": 4, "U": 12, "cand": 9, "vars": 131, "cons": 162, "fams": 8, "canon_calls": 191, "build_s": 0.116, "total_s": 0.14, "ilp_status": 0, "mip_gap": 0.0, "flops": 4305453061.0}
+{"n": 5, "U": 21, "cand": 18, "vars": 448, "cons": 661, "fams": 13, "canon_calls": 575, "build_s": 0.965, "total_s": 1.47, "ilp_status": 0, "mip_gap": 0.0, "flops": 6452936709.000002}
+{"n": 6, "status": "TIMEOUT", "budget_s": 60}
+{"n": 7, "status": "TIMEOUT", "budget_s": 60}
+{"n": 8, "status": "TIMEOUT", "budget_s": 60}

@@ -393,3 +393,26 @@ Held-out scoreboard (flop ratio / wall-ratio model):
   but out of battery scope; watch if it enters a battery)
 
 B-009 (latent duplicate family-ctx entries) fixed alongside.
+
+## MPn ring-diagram scaling sweep (2026-11-09)
+
+New generator: gen_mpn.py — order-n ring diagrams (n antisymmetric rank-4
+tensors in a cycle; 3 outputs: V^n, T.V^{n-1}, T2.V^{n-2}), the MPn ring
+family. Systematic growth axes: factors/term = n (subset axis 2^n),
+intermediate rank ~ 2(m+1) per m-chain (canon renaming groups (m+1)!^2).
+
+Result (60 s/instance budget, guarded): n=2..5 solve to ILP optimality
+(status 0) in 0.01/0.03/0.14/1.47 s with tiny ILPs (<=448 vars).
+n=6 TIMES OUT — a cliff, not a slope.
+
+Mechanism (pinned): canon_full on the full ring term costs (n!)^2 renaming
+combos: measured 0.10 s/call at n=5, 4.3 s/call at n=6, and build_universe
+makes O(2^n) such calls. SECOND failure mode (found the hard way, OOM on a
+14 GB box): canon_full materializes per_group = list(permutations(...)) —
+an n! tuple list is ~GB-transient at n>=8. The sweep now runs each instance
+under RLIMIT_AS=3 GB and records OOM/TIMEOUT gracefully.
+
+Conclusion: the factorial canon is THE scaling wall on the MPn axis —
+before the ILP (tiny), before the DP. Next lever: lazy+pruned canon
+(color refinement / lexicographic branch-and-bound; never materialize
+permutation lists).
