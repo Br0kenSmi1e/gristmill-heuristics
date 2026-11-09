@@ -416,3 +416,34 @@ Conclusion: the factorial canon is THE scaling wall on the MPn axis —
 before the ILP (tiny), before the DP. Next lever: lazy+pruned canon
 (color refinement / lexicographic branch-and-bound; never materialize
 permutation lists).
+
+## CCSDT derived via drudge + solved + verified (2026-11-09)
+
+gen_cc.py derives CC residual equations with drudge (dummy_spark shim, no
+JVM): BCH of the normal-ordered particle-hole Hamiltonian with T=T1..Tm,
+residual = coefficient of the excitation sector (k x (CR over V) + k x
+(AN over O) — the electron-level char convention; the qp-flip reading of
+the op parser was a red herring that cost a debugging round).
+
+Validation (the decisive step): m=2 reproduces the corpus ccsd.json
+EXACTLY — singles 14/14 sigs, doubles identical 31-sig set (corpus keeps
+permutation partners unmerged: 63 terms = multiplicities 1/2/4 over the
+same 31 sigs), energy = corpus 3 + HF reference (convention extra).
+
+CCSDT (m=3): 108 terms (energy 5, singles 15, doubles 37, triples 47 —
+textbook content: u.t3, u.t2.t3, f.t3, u.t2.t2, ...). Derivation ~3.5 min
+serial. ILP: U=206, 2704 vars, build 5.8s, status 0 — UNDER the 10s
+budget, no canon wall (canon groups stay small; why ccsd_t takes 13s with
+fewer terms is now an open anomaly — its intermediates must have bigger
+free-label groups). Verified: oracle (3,5) worst rel 6.5e-16.
+
+vs gristmill (same-equation baseline, 2.9s optimize): leading FLOPs
+gristmill 14*O^5 V^3 + 8*O^4 V^4 + 2*O^3 V^5 vs ILP
+12*O^5 V^3 + 8*O^4 V^4 + 2*O^3 V^5 — strict win on the leading
+coefficient; ratio 0.9805 at (O=1000, V=5000). Gristmill candidate also
+verified.
+
+Fixture: fixtures/ccsdt_derived.json. Baseline tooling note: the
+gristmill exporter needed Pow-expansion (drudge canon collapses repeated
+factors to powers) — patched in /tmp/gristmill_baseline_timed5.py (TMP,
+recreate on machine change).
