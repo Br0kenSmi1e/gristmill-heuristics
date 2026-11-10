@@ -23,9 +23,9 @@ same-equation gristmill baselines produced locally.
 | instance | gristmill FLOPs | ILP FLOPs | gristmill runtime | ILP runtime | verified |
 |---|---|---|---|---|---|
 | `mp3` | 4·O⁴V² + 3·O³V³ + 3·O²V⁴ | **2·O⁴V² + 2·O³V³ + 2·O²V⁴** | 0.50 s | 0.23 s | ✓ |
-| `ccd` | 4·O⁴V² + 6·O³V³ + 2·O²V⁴ | 4·O⁴V² + 6·O³V³ + 2·O²V⁴ (tie) | 0.26 s | 0.06 s | ✓ |
+| `ccd` | 4·O⁴V² + 6·O³V³ + 2·O²V⁴ | 4·O⁴V² + 6·O³V³ + 2·O²V⁴ | 0.26 s | 0.06 s | ✓ |
 | `ccsd` | 8·O⁴V² + 8·O³V³ + 2·O²V⁴ | **6·O⁴V² + 8·O³V³ + 2·O²V⁴** | 1.78 s | 0.31 s | ✓ |
-| `adc2` | 16·O³V² + 6·O²V³ | 16·O³V² + 6·O²V³ (exact tie = proof of optimality in the space) | 0.30 s | 0.02 s | ✓ |
+| `adc2` | 16·O³V² + 6·O²V³ | 16·O³V² + 6·O²V³ | 0.30 s | 0.02 s | ✓ |
 | `ccsd_lambda` | 12·O⁴V² + 6·O³V³ + 2·O²V⁴ | **8·O⁴V² + 4·O³V³ + 2·O²V⁴** | 2.34 s | 0.63 s | ✓ |
 | `eom_ccsd` | 18·O⁴V² + 10·O³V³ + 2·O²V⁴ | **12·O⁴V² + 10·O³V³ + 2·O²V⁴** | 4.15 s | 0.70 s | ✓ |
 | `ccsd_t` | 19·O⁴V³ + 20·O³V⁴ | **4·O⁴V³ + 4·O³V⁴** | 11.83 s | 9.79 s | ✓ |
@@ -43,21 +43,38 @@ verified HiGHS *incumbent* (125k vars; optimality unproven, mip_gap
 build did not finish in >60 min (cover-enumeration wall, separate from
 the canon wall).
 
-## Wall time (measured, not model)
+## Wall time (measured, not model): vs the four baseline pipelines
 
-Median wall time ratio ours/gristmill (same-equation candidates), at
-(16,64), release binary, `--layout model`, median of 10 after 3 warmup,
-interleaved A/B, per-run load recorded. Ratio < 1.0 = we are faster.
+Median wall time in ms at (16,64), single thread / 16 threads. Every cell
+gate-verified. Ours: the challenger's candidates on the tenferro backend
+(source: `trials/20261105-131316-wallbench.jsonl`). Baselines: gristmill's
+own schedule through its four shipped code generators (source:
+`gristmill-native-baselines/tools/native/RESULTS.md`, same machine).
 
-| problem | t1 | t16 | model predicted |
-|---|---|---|---|
-| `mp3` | **0.818** | **0.817** | 0.929 |
-| `ccd` | **0.636** | 1.063 | 0.954 |
-| `ccsd` | **0.880** | **0.852** | 0.933 |
-| `adc2` | **0.621** | 1.019 | 1.001 |
-| `eom_ccsd` (held-out) | 1.137 | 1.303 | — |
+| problem | **ours** t1/t16 | numpy t1/t16 | C t1/t16 | Fortran t1/t16 | Julia t1/t16 |
+|---|---|---|---|---|---|
+| `mp3` | **202.6 / 46.3** | 4027.4 / 4168.5 | 29923.5 / 29427.0 | 77584.6 / 68488.4 | 18961.9 / 18731.5 |
+| `ccd` | **463.0 / 153.6** | 3178.7 / 3148.2 | 12197.2 / 12889.2 | 74165.0 / 73859.6 | **261.5 / 249.4** |
+| `ccsd` | 628.9 / **300.8** | 3851.9 / 3852.9 | 25546.5 / 24557.4 | 85787.4 / 85776.7 | **534.3 / 507.7** |
+| `adc2` | **59.4 / 79.2** | 222.1 / 229.0 | 195.8 / 192.1 | 960.6 / 954.3 | 109.2 / 124.6 |
+| `eom_ccsd` | 1021.4 / **547.8** | 4130.7 / 4134.7 | 27100.3 / 27613.6 | 112143.1 / 96536.6 | **650.4 / 604.1** |
 
+### Reading
+- We beat the numpy, C, and Fortran pipelines everywhere — by up to two
+  orders of magnitude on the larger problems.
+- The Julia/OMEinsum pipeline is the real competitor: it beats our column
+  at t1 on ccd, ccsd, and eom_ccsd. That failure has an address: the
+  schedule is fine (see the symbolic scoreboard); our backend's
+  single-thread throughput is the next thing to fix.
 ## Caveats on record
+- Wall-comparison protocol notes: the naive C/Fortran and Julia columns ran
+  a reduced protocol (1 warmup, 3 iterations; one naive iteration at (16,64)
+  takes up to 112 s) while ours ran median-of-10 after 3 warmup; margins
+  under ~2x should be read with that in mind. Our column's batch ran under
+  climbing load (3.78 to 7.01; guard at 8): adc2 t16 and eom_ccsd are the
+  most exposed cells.
+- `ccsd_t`/`ccsd_lambda` have no wall row: F-017 blocks full-size execution
+  of the former; the latter's wall row was never in the shared exam corpus.
 
 - The wall table predates this morning's symbolic-table state (the arm
   has since improved ccd/ccsd in FLOPs); refresh via `run_wallbench.py`
