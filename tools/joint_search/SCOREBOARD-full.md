@@ -51,8 +51,9 @@ gate-verified. Ours: the challenger's candidates on the tenferro backend
 own schedule through its four shipped code generators (source:
 `gristmill-native-baselines/tools/native/RESULTS.md`, same machine).
 
-| problem | **ours** t1/t16 | numpy t1/t16 | C t1/t16 | Fortran t1/t16 | Julia t1/t16 |
+| problem | **ILP-tenferro (ms)** | gristmill-numpy (ms) | gristmill-C (ms) | gristmill-Fortran (ms) | gristmill-Julia (ms) |
 |---|---|---|---|---|---|
+|  | *t1 / t16* | *t1 / t16* | *t1 / t16* | *t1 / t16* | *t1 / t16* |
 | `mp3` | **202.6 / 46.3** | 4027.4 / 4168.5 | 29923.5 / 29427.0 | 77584.6 / 68488.4 | 18961.9 / 18731.5 |
 | `ccd` | **463.0 / 153.6** | 3178.7 / 3148.2 | 12197.2 / 12889.2 | 74165.0 / 73859.6 | **261.5 / 249.4** |
 | `ccsd` | 628.9 / **300.8** | 3851.9 / 3852.9 | 25546.5 / 24557.4 | 85787.4 / 85776.7 | **534.3 / 507.7** |
