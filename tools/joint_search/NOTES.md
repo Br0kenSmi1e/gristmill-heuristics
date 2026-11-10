@@ -465,3 +465,32 @@ CCSDT: exactly 2 units off the leading O^{k+2}V^k coefficient.
 State of the ladder: CCSDT 6s (fine), CCSDTQ 403s (canon-bound). The
 canon rewrite (lazy/pruned enumeration) is the gate to CCSDTQ being
 practical and to MPn n>=6 at all.
+
+## Real MP4 via perturbative CC expansion (2026-11-10)
+
+gen_mp.py: real MPn energies by order-expanding the CC residual equations
+(gen_cc.py drudge pipeline, m=4) — t_s^(k) = d_s . (order-k residual terms),
+pure-Python recursion on a neutral IR; denominators d_s declared as tensors
+(corpus mp3 convention: v=0 antisym, d2=1 within-half-symmetric).
+Validation: derived MP3 == corpus mp3 numerically to 1e-15 (on tensors
+with the physical half-exchange symmetry; a per-amplitude normalization
+(1/(k!)^2 vs none) and orientation conventions were isolated and fixed —
+splice must substitute last-factor-first).
+
+MP4 energy: 21 terms, maxfac 7. Result: gristmill 11*O^4V^3 + 9*O^3V^4
+(233.6 s optimize) vs ILP 7*O^4V^3 + 5*O^3V^4 (293 s) — ratio 0.5714 at
+(1000,5000), the largest derived-problem margin. CAVEAT: the ILP number
+is a HiGHS INCUMBENT (125,795 vars; status 1, mip_gap 0.49; bad_alloc
+past 3 GB at longer limits) — verified-valid, optimality unproven.
+
+MP5 paused by task decision: 162 terms / maxfac 9 — the ILP BUILD did not
+finish in >60 min (cover enumeration is the bomb there, not canon).
+
+Verification-cost finding (matters for all large generated problems):
+truthmill::verify = expand-then-canonicalize; canon enumerates the
+PRODUCT of per-factor symmetry-group orbits per term, so declared group
+sizes multiply (v with half-exchange added = order 8; d3 S3xS3 = 36) —
+MP4 verify hung until symmetries were reduced (v: antisym pair; d*:
+swap-only). Under-declaring is sound (verification unaffected) but costs
+sharing. The oracle separately brute-force-evaluates each reference term
+over all its labels — slow for 7-factor chains (4 min at (2,3)).

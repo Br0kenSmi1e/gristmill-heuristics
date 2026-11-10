@@ -46,9 +46,10 @@ def make_drudge():
     return dr
 
 
-def cluster_ops(dr, m):
-    """T = sum_k T_k, T_k = (1/(k!)^2) sum t_k[a.., i..] cr[a]...cr[i]
-    (quasiparticle creations; amplitudes antisym in each half)."""
+def cluster_ops(dr, m, factorial_norm=True):
+    """T = sum_k T_k. With factorial_norm: T_k = (1/(k!)^2) sum t_k...
+    (standard CC convention). Without: plain sum t_k[...] ops (the MP
+    recursion convention — matches corpus mp3 coefficients)."""
     import math
     p = dr.names
     T = None
@@ -65,8 +66,9 @@ def cluster_ops(dr, m):
         for x in ii:
             ops = ops * dr.an[x]
         sums = [(x, p.V) for x in aa] + [(x, p.O) for x in ii]
-        Tk = dr.sum(*sums, Rational(1, math.factorial(k) ** 2)
-                    * t[aa + ii] * ops)
+        c = Rational(1, math.factorial(k) ** 2) if factorial_norm \
+            else Rational(1)
+        Tk = dr.sum(*sums, c * t[aa + ii] * ops)
         T = Tk if T is None else T + Tk
     return T.simplify(), bases
 

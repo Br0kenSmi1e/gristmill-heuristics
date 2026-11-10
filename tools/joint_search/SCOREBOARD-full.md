@@ -4,7 +4,9 @@ Branch `joint-search-proto`, worktree `gristmill-joint-search`.
 All rows gate-verified (symbolic check + numerical oracle at (3,5)).
 Sources: `trials/20261106-110249.jsonl` (main-corpus symbolic table),
 `trials/20261109-160027-ccsdt.jsonl`, `trials/20261109-171354-ccsdtq.jsonl`,
-`trials/20261109-151107-mpn.jsonl` (derived problems),
+`trials/20261109-160027-ccsdt.jsonl`,
+`trials/20261109-171354-ccsdtq.jsonl`, `trials/20261110-153350-mp4.jsonl`
+(derived problems),
 `trials/20261105-131316-wallbench.jsonl` (wall table, via SCOREBOARD.md).
 
 ## Symbolic operation counts
@@ -12,9 +14,10 @@ Sources: `trials/20261106-110249.jsonl` (main-corpus symbolic table),
 Leading terms of the symbolic FLOP count (O = occupied, V = virtual;
 evaluated at O=1000, V=5000). Runtime columns are the *optimizer's* own
 compile time. `ccsd_lambda`/`eom_ccsd`/`ccsd_t` are held-out (never
-tuned on). `ccsdt`/`ccsdtq` and the `mpn` rows are problems generated in
+tuned on). `ccsdt`/`ccsdtq` and the `mp4` row are problems generated in
 this arm (CC residuals via drudge, `gen_cc.py` — validated sig-for-sig
-against corpus ccsd before use; `gen_mpn.py` ring diagrams), with
+against corpus ccsd before use; MPn via perturbative CC expansion,
+`gen_mp.py` — its MP3 reproduces corpus mp3 exactly), with
 same-equation gristmill baselines produced locally.
 
 | instance | gristmill FLOPs | ILP FLOPs | gristmill runtime | ILP runtime | verified |
@@ -28,17 +31,17 @@ same-equation gristmill baselines produced locally.
 | `ccsd_t` | 19·O⁴V³ + 20·O³V⁴ | **4·O⁴V³ + 4·O³V⁴** | 11.83 s | 9.79 s | ✓ |
 | `ccsdt` | 14·O⁵V³ + 8·O⁴V⁴ + 2·O³V⁵ | **12·O⁵V³** + 8·O⁴V⁴ + 2·O³V⁵ | 2.90 s | 5.99 s | ✓ |
 | `ccsdtq` | 16·O⁶V⁴ + 10·O⁵V⁵ + 2·O⁴V⁶ | **14·O⁶V⁴** + 10·O⁵V⁵ + 2·O⁴V⁶ | 5.70 s | 403 s | ✓ |
-| `mpn2` | 6·O²V² | 6·O²V² (tie) | 0.03 s | 0.003 s | ✓ |
-| `mpn3` | 4·O³V³ | 4·O³V³ (tie) | 0.08 s | 0.02 s | ✓ |
-| `mpn4` | 8·O³V³ | **4·O³V³** (2× win) | 0.15 s | 0.14 s | ✓ |
-| `mpn5` | 18·O³V³ | **6·O³V³** (3× win) | 0.27 s | 1.41 s | ✓ |
+| `mp4` ‡ | 11·O⁴V³ + 9·O³V⁴ | **7·O⁴V³ + 5·O³V⁴** | 233.6 s | 293.1 s | ✓ |
 
 FLOP ratios at (O=1000, V=5000) for the derived CC rungs: ccsdt 0.9805,
 ccsdtq 0.9825 — strict wins on the leading Oᵏ⁺²Vᵏ coefficient (exactly
-2 units on each rung). MPn ties low orders; the win grows with order
-(2×, 3×) until the factorial-canon wall cuts the series off at n=6
-(60 s budget, recorded in the trials line; those rows have no results
-and are not shown).
+2 units on each rung). Real MP4 (perturbative CC expansion via drudge,
+`gen_mp.py`; its MP3 reproduces corpus mp3 exactly) wins by 43%
+(0.5714) — the largest derived-problem margin. The ILP number is a
+verified HiGHS *incumbent* (125k vars; optimality unproven, mip_gap
+0.49), so the true optimum may be lower still. MP5 is paused: its ILP
+build did not finish in >60 min (cover-enumeration wall, separate from
+the canon wall).
 
 ## Wall time (measured, not model)
 
@@ -69,5 +72,10 @@ interleaved A/B, per-run load recorded. Ratio < 1.0 = we are faster.
 - Derived-problem caveats: ccsdtq's ILP runtime is canon-bound (99.9% of
   build in `canon_full`; the MILP itself is subsecond); oracle checks at
   (3,5) take ~17 min per candidate there (dense rank-8 reference eval).
-  mpn≥6 hits the same factorial-canon wall inside the 60 s budget;
-  gristmill was not run there (its own search also degrades).
+  mp4 verification: truthmill::verify's canonicalization is exponential
+  in the product of per-factor symmetry-group sizes, so the generated
+  problems under-declare symmetries (v antisym pair only; denominators
+  swap-only) — sound, slightly less sharing; symbolic verify passes,
+  oracle checked at (2,3) (dense n-ary per-term eval is the slow part).
+  (Synthetic ring probes `gen_mpn.py` remain tooling for the canon wall
+  — not benchmark rows.)
